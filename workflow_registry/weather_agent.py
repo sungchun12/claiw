@@ -96,7 +96,7 @@ async def main():
         logfire.instrument_httpx(client, capture_all=True)
         deps = Deps(client=client)
         result = await weather_agent.run(
-            'What is the weather like in London and in Wiltshire?', deps=deps
+            'What is the weather like in Los Angeles?', deps=deps
         )
         print('Response:', result.output)
 
