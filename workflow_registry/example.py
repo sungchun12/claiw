@@ -9,7 +9,6 @@ agent = Agent(
 
 dbos_agent = DBOSAgent(agent)  
 
-# Optional: for local testing (won't be used by CLI run)
 async def main():
     # Note: DBOS.launch() would be needed here if running directly with python
     # but we are optimizing for CLI usage now.
