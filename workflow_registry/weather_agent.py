@@ -20,6 +20,7 @@ from httpx import AsyncClient
 from pydantic import BaseModel
 
 from pydantic_ai import Agent, RunContext
+from dbos import DBOS
 
 # 'if-token-present' means nothing will be sent (and the example will work) if you don't have logfire configured
 logfire.configure(send_to_logfire='if-token-present')
@@ -47,6 +48,7 @@ class LatLng(BaseModel):
 
 
 @weather_agent.tool
+@DBOS.step()
 async def get_lat_lng(ctx: RunContext[Deps], location_description: str) -> LatLng:
     """Get the latitude and longitude of a location.
 
@@ -64,6 +66,7 @@ async def get_lat_lng(ctx: RunContext[Deps], location_description: str) -> LatLn
 
 
 @weather_agent.tool
+@DBOS.step()
 async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str, Any]:
     """Get the weather at a location.
 
@@ -91,14 +94,19 @@ async def get_weather(ctx: RunContext[Deps], lat: float, lng: float) -> dict[str
     }
 
 
-async def main():
+@DBOS.step()
+async def run_agent_step(user_query: str) -> str:
     async with AsyncClient() as client:
         logfire.instrument_httpx(client, capture_all=True)
         deps = Deps(client=client)
-        result = await weather_agent.run(
-            'What is the weather like in Los Angeles?', deps=deps
-        )
-        print('Response:', result.output)
+        result = await weather_agent.run(user_query, deps=deps)
+        return result.data
+
+
+@DBOS.workflow()
+async def main():
+    result = await run_agent_step('What is the weather like in Los Angeles?')
+    print('Response:', result)
 
 
 if __name__ == '__main__':
