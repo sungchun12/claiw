@@ -1,7 +1,7 @@
 [project]
 name = "claiw"
 version = "0.1.0"
-description = "Add your description here"
+description = "A supercharged version of clai from pydantic tailored for workflows."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = []
