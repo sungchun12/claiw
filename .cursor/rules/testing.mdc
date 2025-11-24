@@ -1,0 +1,46 @@
+---
+description: Standards for testing CLIs, agents, and workflows.
+globs: tests/**/*.py
+---
+
+# Testing Standards
+
+## Philosophy
+- **"Claw Machine" Reliability:** Tests ensure the user wins on the first try.
+- **Pytest First:** Use `pytest` as the runner.
+- **Mocking:** Mock external LLM calls for unit tests; use real calls (recorded or live) for integration/evals.
+
+## Requirements
+1. **Structure:**
+   - `tests/unit/`: Fast, no external network calls.
+   - `tests/integration/`: Tests the full flow (CLI -> DBOS -> Agent).
+   - `tests/e2e/`: Full end-to-end validation.
+2. **Fixtures:**
+   - Use `conftest.py` for shared setup (e.g., DBOS test database, Click runner).
+3. **Coverage:**
+   - Aim for high coverage on core logic.
+
+## Patterns
+
+### Testing Click CLIs
+```python
+from click.testing import CliRunner
+from claiw.cli import main
+
+def test_hello_command():
+    runner = CliRunner()
+    result = runner.invoke(main, ['hello'])
+    assert result.exit_code == 0
+    assert "Hello" in result.output
+```
+
+### Testing DBOS Workflows
+- Use `DBOS.test_workflow` or equivalent testing utilities provided by the DBOS SDK to simulate workflow execution without a full backend if possible.
+
+### Testing Agents
+- Mock the `Agent.run` method to return predefined responses for deterministic unit tests.
+- Use `pydantic_ai.models.test.TestModel` for testing agent logic without spending credits.
+
+## Boundaries
+- 🚫 **Never:** Commit tests that require a live API key to pass (unless marked as integration/e2e and skipped by default).
+- 🚫 **Never:** Use `print()` for debugging in tests; use `logging` or assertions.

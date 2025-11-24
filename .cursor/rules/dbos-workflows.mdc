@@ -1,0 +1,46 @@
+---
+description: Standards for writing DBOS workflows to ensure durable execution and state management.
+globs: src/claiw/agents/**/workflow.py
+---
+
+# DBOS Workflow Standards
+
+## Philosophy
+- **Durable Execution:** Workflows must be recoverable. If the process crashes, the workflow should resume from the last successful step.
+- **Idempotency:** Every step must be safe to run multiple times.
+- **Observability:** Use DBOS provenance to track inputs and outputs.
+
+## Requirements
+1. **Decorators:**
+   - Use `@DBOS.workflow()` for the main orchestration logic.
+   - Use `@DBOS.step()` for individual units of work (e.g., calling an LLM, writing to disk).
+2. **Serialization:**
+   - All arguments and return values for workflows and steps must be JSON-serializable (DBOS requires this for state checkpoints).
+3. **Transactions:**
+   - Use `@DBOS.transaction()` for any database operations to ensure ACID compliance.
+
+## Patterns
+
+### Basic Workflow
+```python
+from dbos import DBOS
+
+@DBOS.step()
+def step_one(data: str) -> str:
+    """Perform a single unit of work."""
+    return data.upper()
+
+@DBOS.workflow()
+def my_workflow(input_data: str) -> str:
+    """Orchestrate the steps."""
+    result = step_one(input_data)
+    return f"Processed: {result}"
+```
+
+### Error Handling
+- Let exceptions bubble up from steps so DBOS can handle retries (if configured).
+- Do not catch generic `Exception` within a workflow unless you are explicitly handling a known failure mode.
+
+## Boundaries
+- 🚫 **Never:** Perform side effects (API calls, file writes) directly inside a `@dbos.workflow` function. Always wrap them in a `@dbos.step`.
+- 🚫 **Never:** Pass non-serializable objects (like open file handles or thread locks) between steps.

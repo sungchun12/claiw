@@ -1,0 +1,53 @@
+---
+description: Patterns and standards for building agents with PydanticAI.
+globs: src/claiw/agents/**/agent.py, src/claiw/agents/**/tools.py
+---
+
+# PydanticAI Agent Standards
+
+## Philosophy
+- **Structured Agents:** Agents are classes, not just loose functions.
+- **Type Safety:** Use Pydantic models for all inputs, outputs, and tool parameters.
+- **Context Aware:** Leverage `RunContext` to pass dependencies (like DBOS handles or API clients) to tools.
+
+## Requirements
+1. **Agent Definition:**
+   - Define agents using `pydantic_ai.Agent`.
+   - Specify the model (e.g., `openai:gpt-4o`) clearly.
+   - Use system prompts to enforce persona.
+2. **Tools:**
+   - Decorate tool functions with `@agent.tool`.
+   - Use `RunContext` for accessing state or external services.
+   - Docstrings for tools are MANDATORY (the LLM reads them).
+
+## Patterns
+
+### Agent Structure
+```python
+from pydantic import BaseModel
+from pydantic_ai import Agent, RunContext
+
+class AgentDeps(BaseModel):
+    user_id: str
+    db_connection: str
+
+agent = Agent(
+    'openai:gpt-4o',
+    deps_type=AgentDeps,
+    system_prompt="You are a helpful assistant."
+)
+
+@agent.tool
+def get_user_info(ctx: RunContext[AgentDeps], name: str) -> str:
+    """Retrieve information about a user."""
+    # Access dependencies via ctx.deps
+    return f"User {name} (ID: {ctx.deps.user_id})"
+```
+
+### Structured Output
+- Always prefer structured outputs (Pydantic models) over raw strings for final results.
+- Use `agent.run_sync(..., result_type=MyModel)` to enforce schema.
+
+## Boundaries
+- 🚫 **Never:** Hardcode model names deep in the logic. Make them configurable.
+- 🚫 **Never:** Create tools without type hints. PydanticAI relies on them for schema generation.
