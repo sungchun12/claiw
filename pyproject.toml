@@ -4,4 +4,29 @@ version = "0.1.0"
 description = "A supercharged version of clai from pydantic tailored for workflows."
 readme = "README.md"
 requires-python = ">=3.12"
-dependencies = []
+license = {text = "Apache-2.0"}
+authors = [
+  {name = "Sung", email = "sung@example.com"}
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "click>=8.1.7",
+    "pydantic-ai>=0.0.1",
+    "dbos>=0.1.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/yourusername/claiw"
+Repository = "https://github.com/yourusername/claiw"
+
+[project.scripts]
+claiw = "claiw.cli:main"
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
