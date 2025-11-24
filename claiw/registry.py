@@ -1,5 +1,6 @@
 import os
 import ast
+import click
 from pathlib import Path
 from typing import List, Optional, Dict, Any
 
@@ -23,7 +24,6 @@ def register_workflows(directory: str = "workflow_registry"):
     
     registry_path = Path(directory)
     if not registry_path.exists():
-        # If directory doesn't exist, just return (or maybe warn?)
         return
 
     with get_db_connection() as conn:
@@ -48,7 +48,10 @@ def register_workflows(directory: str = "workflow_registry"):
                 """, (name, description, code_content, str(file_path)))
                 
             except Exception as e:
-                print(f"Failed to register {name}: {e}")
+                # Use click.echo for visibility if running from CLI, or just print
+                click.echo(f"Warning: Failed to register workflow '{name}' from {file_path}: {e}", err=True)
+                # Continue to next file - isolation
+                continue
         
         conn.commit()
 
@@ -70,4 +73,3 @@ def get_workflow(name: str) -> Optional[Dict[str, Any]]:
         if row:
             return dict(row)
         return None
-
