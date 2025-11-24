@@ -1,7 +1,7 @@
 [project]
 name = "claiw"
 version = "0.1.0"
-description = "A supercharged version of clai from pydantic tailored for workflows."
+description = "A supercharged agent workflow CLI. You're winning at the claw machine on the first try."
 readme = "README.md"
 requires-python = ">=3.12"
 license = {text = "Apache-2.0"}
