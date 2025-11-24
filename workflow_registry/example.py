@@ -2,7 +2,6 @@ from dbos import DBOS, DBOSConfig
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec.dbos import DBOSAgent
-import os
 
 dbos_config: DBOSConfig = {
     'name': 'example',
