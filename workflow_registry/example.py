@@ -9,7 +9,7 @@ agent = Agent(
 
 dbos_agent = DBOSAgent(agent)  
 
-async def main():
+async def main() -> None:
     # Note: DBOS.launch() would be needed here if running directly with python
     # but we are optimizing for CLI usage now.
     result = await dbos_agent.run('What is the capital of Mexico?')  

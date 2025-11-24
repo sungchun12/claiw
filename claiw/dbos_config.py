@@ -4,6 +4,7 @@ def get_dbos_config() -> DBOSConfig:
     return {
         'name': 'claiw-runtime',
         'system_database_url': 'sqlite:///dbostest.sqlite', 
+        'log_level': 'WARNING',
     }
 
 def configure_dbos():
