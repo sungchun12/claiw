@@ -7,7 +7,7 @@ def main():
     pass
 
 @main.command()
-def hello():
+def run():
     """Prints a hello message."""
     click.echo("Hello from claiw!")
 
