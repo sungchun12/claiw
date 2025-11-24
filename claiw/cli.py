@@ -4,6 +4,7 @@ import inspect
 import importlib
 import sys
 import os
+from dbos import DBOS
 from claiw.registry import register_workflows, list_workflows, get_workflow
 
 @click.group()
@@ -45,15 +46,27 @@ def run(name):
         sys.path.insert(0, cwd)
 
     try:
+        # Initialize DBOS before importing/running
+        DBOS.launch()
+
         # Import the module dynamically using importlib
         # This relies on workflow_registry being a python package or in path
         module_name = f"workflow_registry.{name}"
-        module = importlib.import_module(module_name)
+        # Force reload in case DBOS instrumentation needs to re-apply or cache is stale
+        if module_name in sys.modules:
+            module = importlib.reload(sys.modules[module_name])
+        else:
+            module = importlib.import_module(module_name)
         
         # Look for main()
         if hasattr(module, "main") and callable(module.main):
             func = module.main
             if inspect.iscoroutinefunction(func):
+                # Wrap in DBOS.start_workflow if it's a DBOS workflow but being called directly
+                # However, DBOS.workflow decorated functions should handle this automatically if DBOS is launched.
+                # The issue might be that we are running it inside asyncio.run() but DBOS might need to own the loop or context.
+                
+                # If main is a DBOS workflow, we just await it.
                 asyncio.run(func())
             else:
                 func()
