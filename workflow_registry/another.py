@@ -16,6 +16,7 @@ agent = Agent(
 
 dbos_agent = DBOSAgent(agent)
 
+@DBOS.workflow(name='another')
 async def main() -> None:
     # Note: DBOS.launch() would be needed here if running directly with python
     # but we are optimizing for CLI usage now.
