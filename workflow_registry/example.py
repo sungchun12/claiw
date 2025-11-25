@@ -19,7 +19,7 @@ agent = Agent(
     tools=[get_weather],
 )
 
-dbos_agent = DBOSAgent(agent)  
+dbos_agent = DBOSAgent(agent)  # the agent is wrapped in a DBOS durable workflow
 
 @DBOS.workflow() # this is a workflow that wraps dbos_agent as a nested workflow
 async def main() -> None:
