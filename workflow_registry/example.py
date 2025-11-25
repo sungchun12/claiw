@@ -22,7 +22,7 @@ agent = Agent(
 dbos_agent = DBOSAgent(agent)  # the agent is wrapped in a DBOS durable workflow
 
 @DBOS.workflow() # this is a workflow that wraps dbos_agent as a nested workflow
-async def main() -> None:
+async def example() -> None:
     # Note: DBOS.launch() would be needed here if running directly with python
     # but we are optimizing for CLI usage now.
     result = await dbos_agent.run('What is the capital of Mexico and the weather?')
