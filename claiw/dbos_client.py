@@ -17,6 +17,7 @@ def get_workflow_step_latest_history(name: str) -> list[dict]:
     # breakpoint()
     steps = get_all_steps_recursive(latest_workflow_id)
     print_steps(steps)
+    replay_progress_bar(steps)
     return steps
 
 def get_latest_dbos_workflow_id_by_name(name: str) -> str:
@@ -162,5 +163,139 @@ def print_steps(steps: list[dict]) -> None:
                 sys.stdout.write(f"      {YELLOW}↳ Child workflow: {child}{ENDC}\n")
 
         sys.stdout.write("\n")
+
+
+from typing import List, Dict, Any
+from datetime import datetime
+from rich.console import Console
+from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn, SpinnerColumn, ProgressColumn
+from rich.panel import Panel
+from rich.table import Table
+from rich.text import Text
+
+def replay_progress_bar(steps: List[dict]) -> None:
+    """
+    Beautifully displays already-finished progress bars for workflows and child workflows,
+    illustrating their duration and completion as active bars with step breakdowns.
+
+    Args:
+        steps: List of tuples (workflow_id, [step_dicts]), as returned by get_all_steps_recursive.
+    """
+    console = Console()
+    
+    def fmt_time(epoch_ms):
+        if epoch_ms is None:
+            return None
+        try:
+            return datetime.fromtimestamp(epoch_ms / 1000)
+        except Exception:
+            return None
+
+    def get_display_time(dt: datetime) -> str:
+        return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
+
+    def status_icon(step: Dict[str, Any]) -> str:
+        if step.get("error"):
+            return "[bold red]✗[/bold red]"
+        elif step.get("output") is not None:
+            return "[bold green]✓[/bold green]"
+        else:
+            return "[yellow]…[/yellow]"
+
+    def step_color(step: Dict[str, Any]) -> str:
+        if step.get("error"):
+            return "red"
+        elif step.get("output") is not None:
+            return "green"
+        else:
+            return "yellow"
+
+    for workflow_i, (workflow_id, step_list) in enumerate(steps):
+        workflow_panel_title = f"[bold magenta]Workflow {workflow_i+1}:[/bold magenta] [bold]{workflow_id}[/bold]"
+        if not step_list:
+            console.print(Panel(
+                f"[yellow](No steps for this workflow)[/yellow]",
+                title=workflow_panel_title, expand=False,
+            ))
+            continue
+            
+        # Calculate overall workflow timings
+        step_times = [
+            (fmt_time(step.get("started_at_epoch_ms")), fmt_time(step.get("completed_at_epoch_ms")))
+            for step in step_list if step.get("started_at_epoch_ms")
+        ]
+        workflow_start = min((st for st, _ in step_times if st), default=None)
+        workflow_end = max((et for _, et in step_times if et), default=workflow_start)
+        workflow_duration = (workflow_end - workflow_start).total_seconds() if (workflow_start and workflow_end) else 0.1
+
+        # Rich Progress Render (all steps)
+        with Progress(
+            TextColumn("[cyan bold]{task.fields[name]}[/cyan bold]"),
+            BarColumn(bar_width=40, complete_style="green", finished_style="bold green"),
+            TimeElapsedColumn(),
+            TextColumn("[bold magenta]{task.fields[desc]}"),
+            console=console,
+            transient=True
+        ) as progress:
+            for step in step_list:
+                step_num = step.get("function_id", "?")
+                step_name = step.get("function_name", "<?>")
+                start = fmt_time(step.get("started_at_epoch_ms"))
+                end = fmt_time(step.get("completed_at_epoch_ms")) or start
+                color = step_color(step)
+                icon = status_icon(step)
+                if start and end:
+                    dur = max((end - start).total_seconds(), 0.1)
+                else:
+                    dur = 0.1 # minimal duration if pending or missing times
+
+                # Simulate "finished" progress bar to show full length
+                step_task = progress.add_task(
+                    f"Step {step_num}: {step_name}", 
+                    name=f"Step {step_num}: {step_name}",
+                    total=dur,
+                    completed=dur if step.get("output") or step.get("error") else 0,
+                    desc=f"{icon} {get_display_time(start)} → {get_display_time(end)}",
+                )
+                # direct advance so bar is drawn instantly
+                progress.update(step_task, advance=0)
+
+        # Step Table Details
+        step_table = Table(box=None, show_edge=False, expand=True, title="", show_header=True, header_style="bold blue")
+        step_table.add_column("Step", justify="center")
+        step_table.add_column("Status", justify="center")
+        step_table.add_column("Started", justify="left")
+        step_table.add_column("Completed", justify="left")
+        step_table.add_column("Output/Error", style="dim", overflow="fold", max_width=60)
+        step_table.add_column("Child", justify="left")
+        for step in step_list:
+            step_num = step.get("function_id", "?")
+            name = step.get("function_name", "<?>")
+            icon = status_icon(step)
+            started = get_display_time(fmt_time(step.get("started_at_epoch_ms")))
+            completed = get_display_time(fmt_time(step.get("completed_at_epoch_ms")))
+            output = step.get("output")
+            error = step.get("error")
+            output_preview = ""
+            if error:
+                output_preview = f"[red]{str(error)[:100]}{'...' if len(str(error)) > 100 else ''}[/red]"
+            elif output is not None:
+                op = str(output)
+                output_preview = f"[green]{op[:100]}{'...' if len(op) > 100 else ''}[/green]"
+            else:
+                output_preview = ""
+
+            child_wf = step.get("child_workflow_id")
+            child_txt = f"[yellow]↳ {child_wf}[/yellow]" if child_wf else ""
+            step_table.add_row(
+                f"[bold]{step_num}[/bold]\n{name}",
+                icon,
+                started,
+                completed,
+                output_preview,
+                child_txt
+            )
+        console.print(Panel(step_table, title=workflow_panel_title, expand=True, border_style="magenta"))
+        console.print()  # Spacing between workflows
 
 get_workflow_step_latest_history('example')
