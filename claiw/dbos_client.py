@@ -17,7 +17,7 @@ def get_workflow_step_latest_history(name: str) -> list[dict]:
     # breakpoint()
     steps = get_all_steps_recursive(latest_workflow_id)
     print_steps(steps)
-    replay_progress_bar(steps)
+    display_timeline(steps)
     return steps
 
 def get_latest_dbos_workflow_id_by_name(name: str) -> str:
@@ -165,25 +165,33 @@ def print_steps(steps: list[dict]) -> None:
         sys.stdout.write("\n")
 
 
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Tuple
 from datetime import datetime
-from rich.console import Console
-from rich.progress import Progress, BarColumn, TimeElapsedColumn, TimeRemainingColumn, TextColumn, SpinnerColumn, ProgressColumn
+from rich.console import Console, Group
 from rich.panel import Panel
 from rich.table import Table
 from rich.text import Text
+from rich import box
 
-def replay_progress_bar(steps: List[dict]) -> None:
+def display_timeline(steps: List[Tuple[str, List[dict]]]) -> None:
     """
-    Beautifully displays already-finished progress bars for workflows and child workflows,
-    illustrating their duration and completion as active bars with step breakdowns.
+    Renders a beautiful Gantt-style chart showing workflows, steps, and child workflows
+    with their relative timings. All bars are pre-filled to show completed state.
 
     Args:
         steps: List of tuples (workflow_id, [step_dicts]), as returned by get_all_steps_recursive.
     """
     console = Console()
     
-    def fmt_time(epoch_ms):
+    # Theme colors
+    WORKFLOW_COLOR = "blue"            # blue for main workflows
+    CHILD_WORKFLOW_COLOR = "yellow"    # yellow for child workflows
+    STEP_COMPLETE_COLOR = "green"
+    STEP_ERROR_COLOR = "red"
+    STEP_PENDING_COLOR = "yellow"
+    CHILD_COLOR = "cyan"
+    
+    def fmt_time(epoch_ms) -> datetime | None:
         if epoch_ms is None:
             return None
         try:
@@ -192,110 +200,218 @@ def replay_progress_bar(steps: List[dict]) -> None:
             return None
 
     def get_display_time(dt: datetime) -> str:
-        return dt.strftime("%Y-%m-%d %H:%M:%S") if dt else "—"
+        return dt.strftime("%H:%M:%S") if dt else "—"
+    
+    def get_display_time_short(dt: datetime) -> str:
+        """Shorter time format for table display."""
+        return dt.strftime("%M:%S") if dt else "—"
 
     def status_icon(step: Dict[str, Any]) -> str:
         if step.get("error"):
-            return "[bold red]✗[/bold red]"
+            return "✗"
         elif step.get("output") is not None:
-            return "[bold green]✓[/bold green]"
+            return "✓"
         else:
-            return "[yellow]…[/yellow]"
+            return "…"
 
-    def step_color(step: Dict[str, Any]) -> str:
+    def step_style(step: Dict[str, Any]) -> str:
         if step.get("error"):
-            return "red"
+            return STEP_ERROR_COLOR
         elif step.get("output") is not None:
-            return "green"
+            return STEP_COMPLETE_COLOR
         else:
-            return "yellow"
+            return STEP_PENDING_COLOR
 
-    for workflow_i, (workflow_id, step_list) in enumerate(steps):
-        workflow_panel_title = f"[bold magenta]Workflow {workflow_i+1}:[/bold magenta] [bold]{workflow_id}[/bold]"
-        if not step_list:
-            console.print(Panel(
-                f"[yellow](No steps for this workflow)[/yellow]",
-                title=workflow_panel_title, expand=False,
-            ))
-            continue
-            
-        # Calculate overall workflow timings
-        step_times = [
-            (fmt_time(step.get("started_at_epoch_ms")), fmt_time(step.get("completed_at_epoch_ms")))
-            for step in step_list if step.get("started_at_epoch_ms")
-        ]
-        workflow_start = min((st for st, _ in step_times if st), default=None)
-        workflow_end = max((et for _, et in step_times if et), default=workflow_start)
-        workflow_duration = (workflow_end - workflow_start).total_seconds() if (workflow_start and workflow_end) else 0.1
-
-        # Rich Progress Render (all steps)
-        with Progress(
-            TextColumn("[cyan bold]{task.fields[name]}[/cyan bold]"),
-            BarColumn(bar_width=40, complete_style="green", finished_style="bold green"),
-            TimeElapsedColumn(),
-            TextColumn("[bold magenta]{task.fields[desc]}"),
-            console=console,
-            transient=True
-        ) as progress:
-            for step in step_list:
-                step_num = step.get("function_id", "?")
-                step_name = step.get("function_name", "<?>")
-                start = fmt_time(step.get("started_at_epoch_ms"))
-                end = fmt_time(step.get("completed_at_epoch_ms")) or start
-                color = step_color(step)
-                icon = status_icon(step)
-                if start and end:
-                    dur = max((end - start).total_seconds(), 0.1)
-                else:
-                    dur = 0.1 # minimal duration if pending or missing times
-
-                # Simulate "finished" progress bar to show full length
-                step_task = progress.add_task(
-                    f"Step {step_num}: {step_name}", 
-                    name=f"Step {step_num}: {step_name}",
-                    total=dur,
-                    completed=dur if step.get("output") or step.get("error") else 0,
-                    desc=f"{icon} {get_display_time(start)} → {get_display_time(end)}",
-                )
-                # direct advance so bar is drawn instantly
-                progress.update(step_task, advance=0)
-
-        # Step Table Details
-        step_table = Table(box=None, show_edge=False, expand=True, title="", show_header=True, header_style="bold blue")
-        step_table.add_column("Step", justify="center")
-        step_table.add_column("Status", justify="center")
-        step_table.add_column("Started", justify="left")
-        step_table.add_column("Completed", justify="left")
-        step_table.add_column("Output/Error", style="dim", overflow="fold", max_width=60)
-        step_table.add_column("Child", justify="left")
+    # Collect global timeline bounds
+    all_times = []
+    for workflow_id, step_list in steps:
         for step in step_list:
+            st = fmt_time(step.get("started_at_epoch_ms"))
+            et = fmt_time(step.get("completed_at_epoch_ms"))
+            if st:
+                all_times.append(st)
+            if et:
+                all_times.append(et)
+    
+    if not all_times:
+        console.print("[yellow]No timing data available.[/yellow]")
+        return
+    
+    global_start = min(all_times)
+    global_end = max(all_times)
+    global_duration = (global_end - global_start).total_seconds()
+    if global_duration <= 0:
+        global_duration = 1.0  # Avoid division by zero
+    
+    # Chart dimensions
+    CHART_WIDTH = 25
+    
+    def time_to_col(t: datetime) -> int:
+        """Convert a datetime to a column position in the chart."""
+        if t is None:
+            return 0
+        offset = (t - global_start).total_seconds()
+        return int((offset / global_duration) * CHART_WIDTH)
+    
+    def render_bar(start_col: int, end_col: int, char: str = "█", style: str = "green") -> Text:
+        """Render a single bar segment."""
+        bar = Text()
+        bar.append(" " * start_col)
+        bar_len = max(end_col - start_col, 1)
+        bar.append(char * bar_len, style=style)
+        remaining = CHART_WIDTH - end_col
+        bar.append(" " * remaining)
+        return bar
+    
+    # Build the Gantt chart as a table
+    gantt_table = Table(
+        box=box.SIMPLE,
+        show_header=True,
+        header_style="bold blue",
+        expand=True,
+        padding=(0, 1),
+        show_lines=False,  # Remove lines for cleaner look
+    )
+    gantt_table.add_column("Steps", style="bold", no_wrap=True, overflow="visible")
+    gantt_table.add_column("Timeline", no_wrap=True, width=25)
+    gantt_table.add_column("Duration", style="dim", justify="center", no_wrap=True, overflow="visible")
+    gantt_table.add_column("Output", style="dim", no_wrap=False, overflow="fold", ratio=1)
+    gantt_table.add_column("", justify="center", width=2)
+    
+    for workflow_i, (workflow_id, step_list) in enumerate(steps):
+        # Determine if this is a child workflow
+        is_child = False
+        for other_wf_id, other_steps in steps:
+            if other_wf_id == workflow_id:
+                continue
+            for s in other_steps:
+                if s.get("child_workflow_id") == workflow_id:
+                    is_child = True
+                    break
+            if is_child:
+                break
+        
+        indent = "  ↳ " if is_child else ""
+        # Don't truncate - show full workflow ID
+        wf_display_id = workflow_id
+        
+        # Workflow header row
+        if step_list:
+            wf_times = [
+                (fmt_time(s.get("started_at_epoch_ms")), fmt_time(s.get("completed_at_epoch_ms")))
+                for s in step_list if s.get("started_at_epoch_ms")
+            ]
+            wf_start = min((st for st, _ in wf_times if st), default=global_start)
+            wf_end = max((et for _, et in wf_times if et), default=wf_start)
+            wf_dur = (wf_end - wf_start).total_seconds() if wf_start and wf_end else 0
+            
+            start_col = time_to_col(wf_start)
+            end_col = time_to_col(wf_end)
+            
+            # Workflow-level bar
+            bar = Text()
+            bar.append(" " * start_col)
+            bar_len = max(end_col - start_col, 1)
+            # Use different color for child workflows
+            wf_color = CHILD_WORKFLOW_COLOR if is_child else WORKFLOW_COLOR
+            bar.append("▓" * bar_len, style=f"bold {wf_color}")
+            bar.append(" " * (CHART_WIDTH - end_col))
+            
+            gantt_table.add_row(
+                f"{indent}[{wf_color}]▶ {wf_display_id}[/{wf_color}]",
+                bar,
+                f"{get_display_time(wf_start)} → {get_display_time(wf_end)}",
+                f"[cyan]{wf_dur:.1f}s[/cyan]",
+                "📦",
+            )
+        else:
+            empty_bar = Text()
+            empty_bar.append(" " * CHART_WIDTH)
+            wf_color = CHILD_WORKFLOW_COLOR if is_child else WORKFLOW_COLOR
+            gantt_table.add_row(
+                f"{indent}[{wf_color}]▶ {wf_display_id}[/{wf_color}]",
+                empty_bar,
+                "—",
+                "",
+                "—",
+            )
+            continue
+        
+        # Step rows
+        for step_i, step in enumerate(step_list):
             step_num = step.get("function_id", "?")
-            name = step.get("function_name", "<?>")
+            step_name = step.get("function_name", "<?>")
+            # Don't truncate - show full step name
+            step_display = step_name
+            
+            st = fmt_time(step.get("started_at_epoch_ms"))
+            et = fmt_time(step.get("completed_at_epoch_ms")) or st
+            
+            style = step_style(step)
             icon = status_icon(step)
-            started = get_display_time(fmt_time(step.get("started_at_epoch_ms")))
-            completed = get_display_time(fmt_time(step.get("completed_at_epoch_ms")))
+            
+            if st and et:
+                dur = (et - st).total_seconds()
+                start_col = time_to_col(st)
+                end_col = time_to_col(et)
+                bar = render_bar(start_col, end_col, "█", style)
+                dur_str = f"{dur:.1f}s"
+            else:
+                dur_str = "—"
+                bar = Text()
+                bar.append(" " * (CHART_WIDTH // 2 - 4))
+                bar.append("·····", style="dim")
+                bar.append(" " * (CHART_WIDTH // 2 - 4))
+            
+            # Check if this step spawned a child workflow
+            child_wf = step.get("child_workflow_id")
+            arrow = " [yellow]→[/yellow]" if child_wf else ""
+            
+            # Get output/error preview
             output = step.get("output")
             error = step.get("error")
             output_preview = ""
             if error:
-                output_preview = f"[red]{str(error)[:100]}{'...' if len(str(error)) > 100 else ''}[/red]"
+                error_str = str(error).replace('\n', ' ')
+                output_preview = f"[red]Error: {error_str}[/red]"
             elif output is not None:
-                op = str(output)
-                output_preview = f"[green]{op[:100]}{'...' if len(op) > 100 else ''}[/green]"
+                output_str = str(output)
+                # Clean up the output string - preserve natural line breaks
+                output_str = output_str.replace('\n', ' ')
+                output_preview = f"[white]{output_str}[/white]"
+            
+            # Format time range
+            if st and et:
+                time_str = f"{get_display_time(st)} → {get_display_time(et)}"
             else:
-                output_preview = ""
-
-            child_wf = step.get("child_workflow_id")
-            child_txt = f"[yellow]↳ {child_wf}[/yellow]" if child_wf else ""
-            step_table.add_row(
-                f"[bold]{step_num}[/bold]\n{name}",
-                icon,
-                started,
-                completed,
+                time_str = "—"
+            
+            # Tree structure with proper connectors
+            is_last = step_i == len(step_list) - 1
+            if is_child:
+                # For child workflows, use proper tree lines
+                prefix = "   │ " if not is_last else "   │ "
+                connector = "└─" if is_last else "├─"
+                step_label = f"{prefix[:-2]}{connector} {step_num}: {step_display}{arrow}"
+            else:
+                # For parent workflows
+                connector = "└─" if is_last else "├─"
+                step_label = f" {connector} {step_num}: {step_display}{arrow}"
+            
+            gantt_table.add_row(
+                step_label,
+                bar,
+                time_str,
                 output_preview,
-                child_txt
+                Text(icon, style=f"bold {style}"),
             )
-        console.print(Panel(step_table, title=workflow_panel_title, expand=True, border_style="magenta"))
-        console.print()  # Spacing between workflows
+    
+    # Render
+    console.print()
+    console.print(f"[bold blue]📊 Workflow Execution Gantt Chart[/bold blue]")
+    console.print(f"[dim]   Timeline: {get_display_time(global_start)} → {get_display_time(global_end)}[/dim]")
+    console.print()
+    console.print(gantt_table)
+    console.print()
 
 get_workflow_step_latest_history('example')
