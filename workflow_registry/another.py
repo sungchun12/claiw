@@ -2,7 +2,7 @@ from pydantic_ai import Agent
 from pydantic_ai.durable_exec.dbos import DBOSAgent
 from dbos import DBOS
 
-# @DBOS.step()
+@DBOS.step()
 async def get_weather() -> str:  
     # Your I/O logic here  
     return 'rainy'  

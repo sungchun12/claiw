@@ -16,6 +16,7 @@ def get_workflow_step_latest_history(name: str) -> list[dict]:
 
     # breakpoint()
     steps = get_all_steps_recursive(latest_workflow_id)
+    print(steps)
     print_steps(steps)
     display_timeline(steps)
     return steps
