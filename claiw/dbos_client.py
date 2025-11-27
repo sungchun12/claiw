@@ -10,7 +10,7 @@ from typing import Any
 from dbos import DBOSClient
 from pydantic import BaseModel, Field
 
-from claiw.registry import list_workflows as list_workflows_from_registry
+from claiw.registry import list_workflows_from_registry 
 
 
 class DBOSClientConfig(BaseModel):
@@ -253,10 +253,10 @@ class ClaiwDBOSClient:
 
 
 # Default client instance for convenience (lazy initialization)
-_default_client: ClaiWDBOSClient | None = None
+_default_client: ClaiwDBOSClient | None = None
 
 
-def get_default_client() -> ClaiWDBOSClient:
+def get_default_client() -> ClaiwDBOSClient:
     """Get the default ClaiW DBOS client instance.
 
     Returns:
@@ -264,5 +264,5 @@ def get_default_client() -> ClaiWDBOSClient:
     """
     global _default_client
     if _default_client is None:
-        _default_client = ClaiWDBOSClient()
+        _default_client = ClaiwDBOSClient()
     return _default_client

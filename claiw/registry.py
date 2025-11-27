@@ -55,7 +55,7 @@ def register_workflows(directory: str = "workflow_registry"):
         
         conn.commit()
 
-def list_workflows() -> List[Dict[str, Any]]:
+def list_workflows_from_registry() -> List[Dict[str, Any]]:
     """List all registered workflows."""
     init_db() # Ensure table exists
     with get_db_connection() as conn:
