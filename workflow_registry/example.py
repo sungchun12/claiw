@@ -4,7 +4,7 @@ from dbos import DBOS
 
 @DBOS.step()
 async def get_weather() -> str:  
-    # Your I/O logic here  
+    # Your I/O logic here 
     return 'It is sunny today'
 
 @DBOS.step()

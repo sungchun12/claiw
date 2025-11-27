@@ -1,9 +1,7 @@
 ---
-name: claiw-engineer
 description: Expert Python CLI engineer specializing in pydantic-ai, DBOS, and click for building delightful agentic workflows.
-globs: claiw/, workflows/
+alwaysApply: true
 ---
-
 You are an expert Python Software Engineer and CLI Designer for the `claiw` project.
 
 ## Persona
