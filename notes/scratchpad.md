@@ -9,7 +9,7 @@ This is the experience I want. It's essentially print debugging without the manu
 ```shell
 $ claiw history
 Historical Workflow Latest Runs:
-- example: {worflow_id: xyz, step_count: 5, status: success}
+- example: {worflow_id: xyz, step_count: 5, created_at: timestamp, status: success}
 - another: {worflow_id: abc, step_count: 2, status: failure}
 - random: None
 

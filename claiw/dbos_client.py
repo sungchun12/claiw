@@ -10,7 +10,7 @@ from typing import Any
 from dbos import DBOSClient
 from pydantic import BaseModel, Field
 
-from claiw.registry import list_workflows_from_registry 
+from claiw.registry import list_workflows_from_registry
 
 
 class DBOSClientConfig(BaseModel):
@@ -114,6 +114,50 @@ class WorkflowExecution(BaseModel):
         return len(self.child_workflow_ids) > 0
 
 
+class WorkflowSummary(BaseModel):
+    """Summary information for a workflow execution.
+
+    Attributes:
+        workflow_id: The unique identifier for this workflow execution.
+        name: The workflow name.
+        step_count: Number of steps in this workflow.
+        created_at: Unix timestamp (milliseconds) when the workflow was created.
+        status: The execution status (SUCCESS, ERROR, PENDING, etc.).
+    """
+
+    workflow_id: str
+    name: str
+    step_count: int = 0
+    created_at: int | None = None
+    status: str = "UNKNOWN"
+
+    @property
+    def created_at_formatted(self) -> str:
+        """Format created_at as a human-readable datetime string."""
+        if self.created_at is None:
+            return "—"
+        from datetime import datetime
+
+        try:
+            return datetime.fromtimestamp(self.created_at / 1000).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except Exception:
+            return str(self.created_at)
+
+    @property
+    def status_display(self) -> str:
+        """Get a display-friendly status with color hint."""
+        status_map = {
+            "SUCCESS": "success",
+            "ERROR": "error",
+            "PENDING": "pending",
+            "RETRIES_EXCEEDED": "error",
+            "CANCELLED": "cancelled",
+        }
+        return status_map.get(self.status, "unknown")
+
+
 class ClaiwDBOSClient:
     """Type-safe client for interacting with DBOS workflow history.
 
@@ -177,6 +221,65 @@ class ClaiwDBOSClient:
                 latest_by_name[workflow_name] = dbos_workflows[0].workflow_id
 
         return latest_by_name
+
+    def get_recent_workflows_summary(
+        self, limit_per_name: int = 3
+    ) -> dict[str, list[WorkflowSummary]]:
+        """Get recent workflow summaries for all registered workflows.
+
+        Returns the most recent N executions for each workflow in the registry,
+        with summary information including step count, status, and timestamps.
+
+        Args:
+            limit_per_name: Maximum number of recent executions per workflow name.
+
+        Returns:
+            Dictionary mapping workflow names to lists of WorkflowSummary objects.
+        """
+        workflows_from_registry = list_workflows_from_registry()
+        summaries_by_name: dict[str, list[WorkflowSummary]] = {}
+
+        for workflow in workflows_from_registry:
+            workflow_name = workflow["name"]
+            dbos_workflows = self._client.list_workflows(
+                name=workflow_name, limit=limit_per_name, sort_desc=True
+            )
+
+            summaries: list[WorkflowSummary] = []
+            for wf in dbos_workflows:
+                # Get step count for this workflow (with fallback for missing app db)
+                try:
+                    steps = self._client.list_workflow_steps(wf.workflow_id)
+                    step_count = len(steps)
+                except Exception as e:
+                    # Fallback to sys_db if transaction_outputs table doesn't exist
+                    if "no such table: transaction_outputs" in str(
+                        e
+                    ) or "does not exist" in str(e):
+                        try:
+                            steps = self._client._sys_db.get_workflow_steps(
+                                wf.workflow_id
+                            )
+                            step_count = len(steps)
+                        except Exception:
+                            step_count = 0
+                    else:
+                        step_count = 0
+
+                summaries.append(
+                    WorkflowSummary(
+                        workflow_id=wf.workflow_id,
+                        name=wf.name,
+                        step_count=step_count,
+                        created_at=wf.created_at,
+                        status=wf.status,
+                    )
+                )
+
+            if summaries:
+                summaries_by_name[workflow_name] = summaries
+
+        return summaries_by_name
 
     def get_workflow_steps_recursive(
         self,
