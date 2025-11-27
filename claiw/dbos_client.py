@@ -114,7 +114,7 @@ class WorkflowExecution(BaseModel):
         return len(self.child_workflow_ids) > 0
 
 
-class ClaiWDBOSClient:
+class ClaiwDBOSClient:
     """Type-safe client for interacting with DBOS workflow history.
 
     This client wraps the DBOSClient and provides typed methods that return
