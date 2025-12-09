@@ -16,6 +16,27 @@ def extract_description(code: str) -> str:
         pass
     return "No description provided."
 
+
+def has_claiw_handler(code: str) -> bool:
+    """Check if code defines a claiw_handler function.
+
+    Args:
+        code: The source code to check.
+
+    Returns:
+        True if a claiw_handler function (sync or async) is defined.
+    """
+    try:
+        module = ast.parse(code)
+        for node in ast.walk(module):
+            if isinstance(node, ast.FunctionDef) and node.name == "claiw_handler":
+                return True
+            if isinstance(node, ast.AsyncFunctionDef) and node.name == "claiw_handler":
+                return True
+    except Exception:
+        pass
+    return False
+
 def register_workflows(directory: str = "workflow_registry"):
     """Scan the directory and register workflows in the database."""
     # Ensure DB exists
@@ -35,6 +56,19 @@ def register_workflows(directory: str = "workflow_registry"):
             name = file_path.stem
             try:
                 code_content = file_path.read_text(encoding="utf-8")
+                
+                # Validate claiw_handler exists
+                if not has_claiw_handler(code_content):
+                    click.echo(
+                        f"Error: Workflow '{name}' missing required 'claiw_handler' function.\n"
+                        f"Define your entrypoint as:\n\n"
+                        f"    @DBOS.workflow(name='{name}')\n"
+                        f"    async def claiw_handler() -> None:\n"
+                        f"        ...\n",
+                        err=True,
+                    )
+                    continue
+                
                 description = extract_description(code_content)
                 
                 cursor.execute("""

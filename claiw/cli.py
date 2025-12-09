@@ -5,8 +5,7 @@ import inspect
 import importlib
 import sys
 import os
-from pydantic_ai import Agent
-from pydantic_ai.durable_exec.dbos import DBOSAgent
+
 from claiw.registry import (
     register_workflows,
     list_workflows_from_registry,
@@ -24,14 +23,11 @@ def main():
 
 @main.command()
 @click.argument("name", required=False)
-@click.argument("input_text", required=False)
-def run(name, input_text):
+def run(name: str | None) -> None:
     """Run a registered workflow.
 
     NAME: The name of the workflow to run.
-    INPUT_TEXT: Optional input text to pass to the workflow's entrypoint.
     """
-
     # 1. Configure DBOS so DBOSAgent() calls work during import
     # This MUST happen before we import any modules that instantiate DBOSAgent
     try:
@@ -82,77 +78,31 @@ def run(name, input_text):
         except Exception as e:
             click.echo(f"Warning: Failed to launch DBOS: {e}")
 
-        # 5. Find the target to run
-        target = None
-
-        # Priority 1: Explicit 'entrypoint'
-        if hasattr(module, "entrypoint"):
-            target = module.entrypoint
-
-        # Priority 2: 'main' function (MOVED UP: User explicit request)
-        elif hasattr(module, "main") and callable(module.main):
-            target = module.main
-
-        # Priority 3: Auto-discovery of DBOSAgent/Agent (Fallback if no main/entrypoint)
-        else:
-            for var_name, val in vars(module).items():
-                if isinstance(val, (DBOSAgent, Agent)):
-                    target = val
-                    break
-
-        # Execute the target
-        if target:
-            # Case A: It's an object with a .run() method (e.g., Pydantic/DBOS Agent)
-            if hasattr(target, "run"):
-                prompt = input_text or "Default prompt"
-                if inspect.iscoroutinefunction(target.run):
-                    result = asyncio.run(target.run(prompt))
-                else:
-                    result = target.run(prompt)
-
-                # Print result - PydanticAI results have .data or .output
-                if hasattr(result, "data"):
-                    print(result.data)
-                elif hasattr(result, "output"):
-                    print(result.output)
-                else:
-                    print(result)
-
-            # Case B: It's a callable (function)
-            elif callable(target):
-                # If it's main(), we might want to pass args if available, or call no-arg if input_text is None
-                # BUT, if input_text IS provided, we should probably try to pass it.
-                if inspect.iscoroutinefunction(target):
-                    if input_text is not None:
-                        try:
-                            asyncio.run(target(input_text))
-                        except TypeError:
-                            # Fallback: maybe main() takes no args
-                            asyncio.run(target())
-                    else:
-                        try:
-                            asyncio.run(target())
-                        except TypeError:
-                            click.echo(
-                                "Error: 'main' function expects an argument but none provided."
-                            )
-                else:
-                    if input_text is not None:
-                        try:
-                            target(input_text)
-                        except TypeError:
-                            target()
-                    else:
-                        try:
-                            target()
-                        except TypeError:
-                            click.echo(
-                                "Error: 'main' function expects an argument but none provided."
-                            )
-        else:
+        # 5. Find and execute claiw_handler
+        if not hasattr(module, "claiw_handler"):
             click.echo(
-                f"Warning: No Agent, DBOSAgent, 'entrypoint' variable or 'main()' function found in {name}."
+                f"Error: Workflow '{name}' missing required 'claiw_handler' function.\n"
+                f"Define your entrypoint as:\n\n"
+                f"    @DBOS.workflow(name='{name}')\n"
+                f"    async def claiw_handler() -> None:\n"
+                f"        ...",
+                err=True,
             )
+            return
+
+        handler = module.claiw_handler
+        if not callable(handler):
+            click.echo(
+                f"Error: 'claiw_handler' in workflow '{name}' is not callable.",
+                err=True,
+            )
+            return
+
+        # Execute the handler
+        if inspect.iscoroutinefunction(handler):
+            asyncio.run(handler())
+        else:
+            handler()
 
     except ImportError as e:
         click.echo(f"Error importing workflow module '{name}': {e}")
