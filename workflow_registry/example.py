@@ -12,6 +12,11 @@ async def get_mood() -> str:
     # Your I/O logic here  
     return 'You are happy today'
 
+@DBOS.step()
+async def do_math() -> str:  
+    # Your I/O logic here  
+    return '1+1=2'
+
 agent = Agent(
     'gpt-5-nano',
     instructions="You're an expert in geography.",
@@ -27,5 +32,7 @@ async def claiw_handler() -> None:
     # but we are optimizing for CLI usage now.
     result = await dbos_agent.run('What is the capital of Mexico and the weather?')
     mood = await get_mood()
+    math = await do_math()
     print(result.output)
     print(mood)
+    print(math)
