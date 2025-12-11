@@ -354,6 +354,53 @@ class ClaiwDBOSClient:
 
         return self.get_workflow_steps_recursive(workflow_id)
 
+    def get_workflow_summaries_by_name(
+        self, name: str, limit: int = 10
+    ) -> list[WorkflowSummary]:
+        """Get recent workflow summaries for a specific workflow name.
+
+        Args:
+            name: The workflow name to get summaries for.
+            limit: Maximum number of recent executions to return.
+
+        Returns:
+            List of WorkflowSummary objects for the workflow, sorted by most recent first.
+        """
+        dbos_workflows = self._client.list_workflows(
+            name=name, limit=limit, sort_desc=True
+        )
+
+        summaries: list[WorkflowSummary] = []
+        for wf in dbos_workflows:
+            # Get step count for this workflow (with fallback for missing app db)
+            try:
+                steps = self._client.list_workflow_steps(wf.workflow_id)
+                step_count = len(steps)
+            except Exception as e:
+                # Fallback to sys_db if transaction_outputs table doesn't exist
+                if "no such table: transaction_outputs" in str(
+                    e
+                ) or "does not exist" in str(e):
+                    try:
+                        steps = self._client._sys_db.get_workflow_steps(wf.workflow_id)
+                        step_count = len(steps)
+                    except Exception:
+                        step_count = 0
+                else:
+                    step_count = 0
+
+            summaries.append(
+                WorkflowSummary(
+                    workflow_id=wf.workflow_id,
+                    name=wf.name,
+                    step_count=step_count,
+                    created_at=wf.created_at,
+                    status=wf.status,
+                )
+            )
+
+        return summaries
+
 
 # Default client instance for convenience (lazy initialization)
 _default_client: ClaiwDBOSClient | None = None

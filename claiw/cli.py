@@ -117,7 +117,17 @@ def run(name: str | None) -> None:
 @click.argument("name_or_id", required=False)
 @click.option("--timeline", "-t", is_flag=True, help="Show Gantt chart timeline")
 @click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
-def history(name_or_id: str | None, timeline: bool, as_json: bool) -> None:
+@click.option("--diff", "-d", is_flag=True, help="Compare two workflow runs")
+@click.option("--source", "-s", default=None, help="Source workflow ID for diff")
+@click.option("--compare", "-c", default=None, help="Workflow ID to compare against source")
+def history(
+    name_or_id: str | None,
+    timeline: bool,
+    as_json: bool,
+    diff: bool,
+    source: str | None,
+    compare: str | None,
+) -> None:
     """View workflow execution history.
 
     Shows the execution history for workflows, including steps, timings,
@@ -130,11 +140,66 @@ def history(name_or_id: str | None, timeline: bool, as_json: bool) -> None:
         claiw history <workflow-id>      # Show specific workflow by ID
         claiw history example --timeline # Show Gantt chart
         claiw history example --json     # Output as JSON
+        claiw history example --diff     # Compare two runs interactively
+        claiw history example --diff --source <id1> --compare <id2>  # Direct diff
     """
     from claiw.dbos_client import get_default_client
-    from claiw.display import print_steps, display_timeline
+    from claiw.display import print_steps, display_timeline, display_diff
 
     client = get_default_client()
+
+    # Handle diff mode
+    if diff:
+        if not name_or_id:
+            click.echo("Error: Workflow name is required for diff mode.", err=True)
+            click.echo("Usage: claiw history <workflow-name> --diff", err=True)
+            return
+
+        # Get workflow summaries for selection
+        summaries = client.get_workflow_summaries_by_name(name_or_id, limit=10)
+        if len(summaries) < 2:
+            click.echo(
+                f"Error: Need at least 2 workflow runs to compare. Found {len(summaries)}.",
+                err=True,
+            )
+            return
+
+        # If source and compare provided, use them directly
+        if source and compare:
+            source_id = source
+            compare_id = compare
+        else:
+            # Interactive selection using prompt_toolkit
+            from claiw.display import select_workflows_for_diff
+
+            result = select_workflows_for_diff(summaries)
+            if result is None:
+                click.echo("Diff cancelled.")
+                return
+            source_id, compare_id = result
+
+            # Print the rerunnable command
+            click.echo()
+            click.echo(
+                f"[dim]# To rerun this diff without prompts:[/dim]",
+                color=True,
+            )
+            click.echo(
+                f"claiw history {name_or_id} --diff --source {source_id} --compare {compare_id}"
+            )
+            click.echo()
+
+        # Get executions for both workflows
+        try:
+            source_executions = client.get_workflow_steps_recursive(source_id)
+            compare_executions = client.get_workflow_steps_recursive(compare_id)
+        except Exception as e:
+            click.echo(f"Error fetching workflow data: {e}", err=True)
+            return
+
+        # Display the diff
+        display_diff(source_executions, compare_executions, source_id, compare_id)
+        return
 
     if not name_or_id:
         # List mode: show recent 3 runs per workflow from the registry
