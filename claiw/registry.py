@@ -37,6 +37,37 @@ def has_claiw_handler(code: str) -> bool:
         pass
     return False
 
+
+def extract_workflow_name_from_decorator(code: str) -> str | None:
+    """Extract the workflow name from @DBOS.workflow(name='...') decorator.
+
+    Args:
+        code: The source code to check.
+
+    Returns:
+        The workflow name if found, None otherwise.
+    """
+    try:
+        module = ast.parse(code)
+        for node in ast.walk(module):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "claiw_handler":
+                for decorator in node.decorator_list:
+                    # Check for @DBOS.workflow(name='...')
+                    if isinstance(decorator, ast.Call):
+                        # Check if it's DBOS.workflow
+                        if isinstance(decorator.func, ast.Attribute):
+                            if decorator.func.attr == "workflow":
+                                # Look for name='...' keyword argument
+                                for keyword in decorator.keywords:
+                                    if keyword.arg == "name":
+                                        if isinstance(keyword.value, ast.Constant):
+                                            return keyword.value.value
+                                        elif isinstance(keyword.value, ast.Str):  # Python < 3.8
+                                            return keyword.value.s
+    except Exception:
+        pass
+    return None
+
 def register_workflows(directory: str = "workflow_registry"):
     """Scan the directory and register workflows in the database."""
     # Ensure DB exists
@@ -46,6 +77,9 @@ def register_workflows(directory: str = "workflow_registry"):
     if not registry_path.exists():
         return
 
+    # First pass: collect all workflow names to check for duplicates
+    workflow_names: dict[str, Path] = {}
+    
     with get_db_connection() as conn:
         cursor = conn.cursor()
         
@@ -68,6 +102,44 @@ def register_workflows(directory: str = "workflow_registry"):
                         err=True,
                     )
                     continue
+                
+                # Validate workflow name in decorator matches filename
+                decorator_name = extract_workflow_name_from_decorator(code_content)
+                if decorator_name is None:
+                    click.echo(
+                        f"Error: Workflow '{name}' missing 'name' parameter in @DBOS.workflow decorator.\n"
+                        f"Define your entrypoint as:\n\n"
+                        f"    @DBOS.workflow(name='{name}')\n"
+                        f"    async def claiw_handler() -> None:\n"
+                        f"        ...\n",
+                        err=True,
+                    )
+                    continue
+                
+                if decorator_name != name:
+                    click.echo(
+                        f"Error: Workflow name mismatch in '{file_path.name}'.\n"
+                        f"  Filename suggests: '{name}'\n"
+                        f"  Decorator specifies: '{decorator_name}'\n"
+                        f"  These must match. Update the decorator to:\n\n"
+                        f"    @DBOS.workflow(name='{name}')\n",
+                        err=True,
+                    )
+                    continue
+                
+                # Check for duplicate workflow names
+                if decorator_name in workflow_names:
+                    existing_file = workflow_names[decorator_name]
+                    click.echo(
+                        f"Error: Duplicate workflow name '{decorator_name}' found.\n"
+                        f"  First file: {existing_file}\n"
+                        f"  Second file: {file_path}\n"
+                        f"  Each workflow must have a unique name.\n",
+                        err=True,
+                    )
+                    continue
+                
+                workflow_names[decorator_name] = file_path
                 
                 description = extract_description(code_content)
                 

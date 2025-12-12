@@ -5,7 +5,8 @@ import duckdb
 import pandas as pd
 
 from pydantic_ai import Agent, ModelRetry, RunContext
-
+from pydantic_ai.durable_exec.dbos import DBOSAgent
+from dbos import DBOS
 
 @dataclass
 class AnalystAgentDeps:
@@ -27,11 +28,13 @@ class AnalystAgentDeps:
 
 analyst_agent = Agent(
     'openai:gpt-5',
+    name='data_analyst',
     deps_type=AnalystAgentDeps,
     instructions='You are a data analyst and your job is to analyze the data according to the user request.',
 )
 
 
+@DBOS.step()
 @analyst_agent.tool
 def load_dataset(
     ctx: RunContext[AnalystAgentDeps],
@@ -73,6 +76,7 @@ def load_dataset(
     return '\n'.join(filter(None, output))
 
 
+@DBOS.step()
 @analyst_agent.tool
 def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str:
     """Run DuckDB SQL query on the DataFrame.
@@ -91,16 +95,19 @@ def run_duckdb(ctx: RunContext[AnalystAgentDeps], dataset: str, sql: str) -> str
     return f'Executed SQL, result is `{ref}`'
 
 
+@DBOS.step()
 @analyst_agent.tool
 def display(ctx: RunContext[AnalystAgentDeps], name: str) -> str:
     """Display at most 5 rows of the dataframe."""
     dataset = ctx.deps.get(name)
     return dataset.head().to_string()  # pyright: ignore[reportUnknownMemberType]
 
+dbos_agent = DBOSAgent(analyst_agent)
 
-if __name__ == '__main__':
+@DBOS.workflow(name='data_analyst')  # this is a workflow that wraps dbos_agent as a nested workflow
+def claiw_handler() -> None:
     deps = AnalystAgentDeps()
-    result = analyst_agent.run_sync(
+    result = dbos_agent.run_sync(
         user_prompt='Count how many negative comments are there in the dataset `cornell-movie-review-data/rotten_tomatoes`',
         deps=deps,
     )
