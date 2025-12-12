@@ -492,16 +492,63 @@ def select_workflows_for_diff(
         def get_formatted_text():
             lines = [("class:title", f"\n  {title}\n"), ("", "\n")]
             lines.append(("class:hint", "  Use ↑/↓ to navigate, Enter to select, Esc to cancel\n\n"))
+            
+            # Header row
+            header_parts = [
+                "    ",
+                "Workflow ID".ljust(24),
+                "│ ",
+                "Status".ljust(12),
+                "│ ",
+                "Executor".ljust(12),
+                "│ ",
+                "Created At".ljust(19),
+                "│ ",
+                "Updated At".ljust(19),
+                "│ ",
+                "Forked From".ljust(24),
+                "│ ",
+                "Steps".ljust(6),
+                "\n"
+            ]
+            lines.append(("class:hint", "".join(header_parts)))
+            lines.append(("class:hint", "    " + "─" * 120 + "\n"))
+            
             for i, s in enumerate(filtered):
                 is_selected = i == selected_index[0]
-                style = "class:selected" if is_selected else ""
+                base_style = "class:selected" if is_selected else ""
                 prefix = "  ▶ " if is_selected else "    "
-                status_icon = {"success": "✓", "error": "✗", "pending": "…"}.get(s.status_display, "?")
-                status_style = "class:success" if s.status_display == "success" else "class:error" if s.status_display == "error" else ""
-                line = f"{prefix}"
-                lines.append((style, line))
-                lines.append((f"{style} {status_style}", f"{status_icon} "))
-                lines.append((style, f"{s.workflow_id[:20]}... ({s.created_at_formatted}) [{s.step_count} steps]\n"))
+                
+                status_color_style = "class:success" if s.status_display == "success" else "class:error" if s.status_display == "error" else ""
+                
+                # Format fields
+                workflow_id_display = (s.workflow_id[:22] + "..." if len(s.workflow_id) > 25 else s.workflow_id).ljust(24)
+                status_text = s.status[:10].ljust(12)
+                executor_display = (s.executor_id[:10] + "..." if s.executor_id and len(s.executor_id) > 13 else s.executor_id or "—").ljust(12)
+                created_display = s.created_at_formatted.ljust(19)
+                updated_display = s.updated_at_formatted.ljust(19)
+                forked_display = ((s.forked_from[:22] + "..." if s.forked_from and len(s.forked_from) > 25 else s.forked_from or "—")).ljust(24)
+                steps_display = str(s.step_count).ljust(6)
+                
+                # Build the row with proper styling
+                row_parts = [
+                    (base_style, prefix),
+                    (base_style, workflow_id_display),
+                    (base_style, "│ "),
+                    (f"{base_style} {status_color_style}" if status_color_style else base_style, status_text),
+                    (base_style, "│ "),
+                    (base_style, executor_display),
+                    (base_style, "│ "),
+                    (base_style, created_display),
+                    (base_style, "│ "),
+                    (base_style, updated_display),
+                    (base_style, "│ "),
+                    (base_style, forked_display),
+                    (base_style, "│ "),
+                    (base_style, steps_display),
+                    ("", "\n")
+                ]
+                lines.extend(row_parts)
             return lines
 
         style = Style.from_dict({
@@ -780,15 +827,15 @@ def display_diff(
 
     # Add workflow headers
     diff_table.add_row(
-        f"[bold magenta]▶ SOURCE: {source_id}[/bold magenta]",
-        Text("▓" * CHART_WIDTH, style="bold magenta"),
+        f"[bold blue]▶ SOURCE: {source_id}[/bold blue]",
+        Text("▓" * CHART_WIDTH, style="bold blue"),
         f"[dim]{_get_display_time(global_start)} → {_get_display_time(global_end)}[/dim]",
         "",
         "📦",
     )
     diff_table.add_row(
-        f"[bold cyan]▶ TARGET: {target_id}[/bold cyan]",
-        Text("▓" * CHART_WIDTH, style="bold cyan"),
+        f"[bold green]▶ TARGET: {target_id}[/bold green]",
+        Text("▓" * CHART_WIDTH, style="bold green"),
         "",
         "",
         "📦",
@@ -850,11 +897,11 @@ def display_diff(
         is_child_step = source_is_child or target_is_child
         child_prefix = "  ↳ " if is_child_step else " "
 
-        # --- SOURCE ROW (magenta) - Only show if source step exists ---
+        # --- SOURCE ROW (blue) - Only show if source step exists ---
         if source_step:
             style = _get_step_style(source_step)
             icon = _get_status_icon(source_step)
-            bar = render_bar(source_step, "magenta")
+            bar = render_bar(source_step, "blue")
             dur_str = f"{source_dur:.2f}s" if source_dur is not None else "—"
 
             # Arrow if spawned child workflow
@@ -872,18 +919,18 @@ def display_diff(
                 out_preview = "[dim]—[/dim]"
 
             diff_table.add_row(
-                f"[magenta]{child_prefix}{connector} {func_id}: {func_name}{arrow}[/magenta]  [dim](source)[/dim]",
+                f"[blue]{child_prefix}{connector} {func_id}: {func_name}{arrow}[/blue]  [dim](source)[/dim]",
                 bar,
                 dur_str,
                 out_preview,
                 Text(icon, style=f"bold {style}"),
             )
 
-        # --- TARGET ROW (cyan) - Only show if target step exists ---
+        # --- TARGET ROW (green) - Only show if target step exists ---
         if target_step:
             style = _get_step_style(target_step)
             icon = _get_status_icon(target_step)
-            bar = render_bar(target_step, "cyan")
+            bar = render_bar(target_step, "green")
             dur_str = f"{target_dur:.2f}s" if target_dur is not None else "—"
 
             # Arrow if spawned child workflow
@@ -915,7 +962,7 @@ def display_diff(
                 dur_display = f"{dur_str}  [green](new)[/green]"
 
             diff_table.add_row(
-                f"[cyan]{step_prefix}{func_id}: {func_name}{arrow}[/cyan]  [dim](target)[/dim]",
+                f"[green]{step_prefix}{func_id}: {func_name}{arrow}[/green]  [dim](target)[/dim]",
                 bar,
                 dur_display,
                 out_preview,

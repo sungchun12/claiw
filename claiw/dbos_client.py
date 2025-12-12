@@ -123,6 +123,9 @@ class WorkflowSummary(BaseModel):
         step_count: Number of steps in this workflow.
         created_at: Unix timestamp (milliseconds) when the workflow was created.
         status: The execution status (SUCCESS, ERROR, PENDING, etc.).
+        executor_id: The ID of the executor (process) that most recently executed this workflow.
+        updated_at: Unix timestamp (milliseconds) when the workflow status was last updated.
+        forked_from: The workflow ID this workflow was forked from, if any.
     """
 
     workflow_id: str
@@ -130,6 +133,9 @@ class WorkflowSummary(BaseModel):
     step_count: int = 0
     created_at: int | None = None
     status: str = "UNKNOWN"
+    executor_id: str | None = None
+    updated_at: int | None = None
+    forked_from: str | None = None
 
     @property
     def created_at_formatted(self) -> str:
@@ -144,6 +150,20 @@ class WorkflowSummary(BaseModel):
             )
         except Exception:
             return str(self.created_at)
+
+    @property
+    def updated_at_formatted(self) -> str:
+        """Format updated_at as a human-readable datetime string."""
+        if self.updated_at is None:
+            return "—"
+        from datetime import datetime
+
+        try:
+            return datetime.fromtimestamp(self.updated_at / 1000).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except Exception:
+            return str(self.updated_at)
 
     @property
     def status_display(self) -> str:
@@ -273,6 +293,9 @@ class ClaiwDBOSClient:
                         step_count=step_count,
                         created_at=wf.created_at,
                         status=wf.status,
+                        executor_id=getattr(wf, "executor_id", None),
+                        updated_at=getattr(wf, "updated_at", wf.created_at),
+                        forked_from=getattr(wf, "forked_from", None),
                     )
                 )
 
@@ -396,6 +419,9 @@ class ClaiwDBOSClient:
                     step_count=step_count,
                     created_at=wf.created_at,
                     status=wf.status,
+                    executor_id=getattr(wf, "executor_id", None),
+                    updated_at=getattr(wf, "updated_at", None),
+                    forked_from=getattr(wf, "forked_from", None),
                 )
             )
 
