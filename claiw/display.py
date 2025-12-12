@@ -428,10 +428,10 @@ class WorkflowRenderer:
 def select_workflows_for_diff(
     summaries: list[WorkflowSummary],
 ) -> tuple[str, str] | None:
-    """Interactive selection of two workflows for comparison using prompt_toolkit.
+    """Interactive selection of two workflows for comparison.
 
     Displays an arrow-key navigable menu for selecting two workflow runs
-    to compare (source and compare targets).
+    to compare (source and compare targets). Press Enter to confirm selection.
 
     Args:
         summaries: List of WorkflowSummary objects to choose from.
@@ -439,59 +439,107 @@ def select_workflows_for_diff(
     Returns:
         Tuple of (source_id, compare_id) or None if cancelled.
     """
-    from prompt_toolkit.shortcuts import radiolist_dialog
+    from prompt_toolkit import Application
+    from prompt_toolkit.key_binding import KeyBindings
+    from prompt_toolkit.layout import Layout
+    from prompt_toolkit.layout.containers import HSplit, Window
+    from prompt_toolkit.layout.controls import FormattedTextControl
     from prompt_toolkit.styles import Style
 
-    # Custom style for the dialog
-    dialog_style = Style.from_dict(
-        {
-            "dialog": "bg:#1e1e1e",
-            "dialog.body": "bg:#1e1e1e #d4d4d4",
-            "dialog frame.label": "bg:#1e1e1e #569cd6 bold",
-            "dialog shadow": "bg:#000000",
-            "radiolist": "bg:#1e1e1e",
-            "radio-checked": "#4ec9b0 bold",
-            "radio-selected": "bg:#264f78",
-        }
-    )
+    console = Console()
 
-    # Format choices for the dialog
-    def format_choice(s: WorkflowSummary) -> tuple[str, str]:
+    # Format choices
+    def format_choice(s: WorkflowSummary, selected: bool = False) -> str:
         status_icon = {"success": "✓", "error": "✗", "pending": "…"}.get(
             s.status_display, "?"
         )
-        return (
-            s.workflow_id,
-            f"{status_icon} {s.workflow_id[:12]}... ({s.created_at_formatted}) [{s.step_count} steps]",
+        prefix = "▶ " if selected else "  "
+        return f"{prefix}{status_icon} {s.workflow_id[:20]}... ({s.created_at_formatted}) [{s.step_count} steps]"
+
+    def run_selection(title: str, choices: list[WorkflowSummary], exclude_id: str | None = None) -> str | None:
+        """Run a single selection prompt."""
+        filtered = [s for s in choices if s.workflow_id != exclude_id]
+        if not filtered:
+            return None
+
+        selected_index = [0]  # Use list for mutability in closure
+        result = [None]  # Store result
+
+        bindings = KeyBindings()
+
+        @bindings.add("up")
+        @bindings.add("k")
+        def move_up(event):
+            selected_index[0] = max(0, selected_index[0] - 1)
+
+        @bindings.add("down")
+        @bindings.add("j")
+        def move_down(event):
+            selected_index[0] = min(len(filtered) - 1, selected_index[0] + 1)
+
+        @bindings.add("enter")
+        def confirm(event):
+            result[0] = filtered[selected_index[0]].workflow_id
+            event.app.exit()
+
+        @bindings.add("c-c")
+        @bindings.add("escape")
+        @bindings.add("q")
+        def cancel(event):
+            result[0] = None
+            event.app.exit()
+
+        def get_formatted_text():
+            lines = [("class:title", f"\n  {title}\n"), ("", "\n")]
+            lines.append(("class:hint", "  Use ↑/↓ to navigate, Enter to select, Esc to cancel\n\n"))
+            for i, s in enumerate(filtered):
+                is_selected = i == selected_index[0]
+                style = "class:selected" if is_selected else ""
+                prefix = "  ▶ " if is_selected else "    "
+                status_icon = {"success": "✓", "error": "✗", "pending": "…"}.get(s.status_display, "?")
+                status_style = "class:success" if s.status_display == "success" else "class:error" if s.status_display == "error" else ""
+                line = f"{prefix}"
+                lines.append((style, line))
+                lines.append((f"{style} {status_style}", f"{status_icon} "))
+                lines.append((style, f"{s.workflow_id[:20]}... ({s.created_at_formatted}) [{s.step_count} steps]\n"))
+            return lines
+
+        style = Style.from_dict({
+            "title": "bold cyan",
+            "hint": "dim",
+            "selected": "bold bg:#264f78",
+            "success": "green",
+            "error": "red",
+        })
+
+        layout = Layout(
+            HSplit([
+                Window(content=FormattedTextControl(get_formatted_text), wrap_lines=False),
+            ])
         )
 
-    choices = [format_choice(s) for s in summaries]
+        app: Application = Application(
+            layout=layout,
+            key_bindings=bindings,
+            style=style,
+            full_screen=False,
+            mouse_support=True,
+        )
+        app.run()
+        return result[0]
 
-    # First selection: "Select for Compare"
-    source_id = radiolist_dialog(
-        title="Select for Compare",
-        text="Use arrow keys to navigate, Enter to select the SOURCE workflow:",
-        values=choices,
-        style=dialog_style,
-    ).run()
-
+    # First selection
+    console.print()
+    source_id = run_selection("Select for Compare (SOURCE):", summaries)
     if source_id is None:
         return None
 
-    # Filter out the selected source for the second selection
-    compare_choices = [(wid, label) for wid, label in choices if wid != source_id]
-
-    if not compare_choices:
-        return None
-
-    # Second selection: "Compare with Selected"
-    compare_id = radiolist_dialog(
-        title="Compare with Selected",
-        text=f"Source: {source_id[:12]}...\n\nSelect the workflow to COMPARE against:",
-        values=compare_choices,
-        style=dialog_style,
-    ).run()
-
+    # Second selection
+    compare_id = run_selection(
+        f"Compare with Selected (source: {source_id[:12]}...):",
+        summaries,
+        exclude_id=source_id
+    )
     if compare_id is None:
         return None
 
@@ -505,134 +553,77 @@ def _compute_step_duration(step: WorkflowStep) -> float | None:
     return (step.completed_at_epoch_ms - step.started_at_epoch_ms) / 1000.0
 
 
-def _render_single_timeline(
-    executions: list[WorkflowExecution],
-    label: str,
-    workflow_id: str,
-    console: Console,
-) -> None:
-    """Render a single workflow timeline (helper for diff display).
+def _get_step_style(step: WorkflowStep) -> str:
+    """Get Rich style for a step based on its status."""
+    if step.is_error:
+        return "red"
+    elif step.is_success:
+        return "green"
+    return "yellow"
+
+
+def _get_status_icon(step: WorkflowStep) -> str:
+    """Get status icon for a step."""
+    if step.is_error:
+        return "✗"
+    elif step.is_success:
+        return "✓"
+    return "…"
+
+
+def _compute_word_diff(source_text: str, compare_text: str) -> tuple[Text, Text]:
+    """Compute word-level git-style diff between two text strings.
+
+    Highlights the actual word-level differences like git does:
+    - Common text: shown in dim
+    - Deleted text (in source only): red background
+    - Added text (in compare only): green background
 
     Args:
-        executions: List of WorkflowExecution objects to display.
-        label: Label for the timeline (e.g., "Select for Compare").
-        workflow_id: The workflow ID being displayed.
-        console: Rich Console for output.
+        source_text: The source/original text.
+        compare_text: The compare/new text.
+
+    Returns:
+        Tuple of (source_diff_text, compare_diff_text) as Rich Text objects.
     """
-    # Theme colors
-    WORKFLOW_COLOR = "blue"
-    STEP_COMPLETE_COLOR = "green"
-    STEP_ERROR_COLOR = "red"
-    STEP_PENDING_COLOR = "yellow"
+    import difflib
+    import re
 
-    def status_icon(step: WorkflowStep) -> str:
-        if step.is_error:
-            return "✗"
-        elif step.is_success:
-            return "✓"
-        else:
-            return "…"
+    # Split into words while preserving whitespace and punctuation
+    def tokenize(text: str) -> list[str]:
+        return re.findall(r'\S+|\s+', text)
 
-    def step_style(step: WorkflowStep) -> str:
-        if step.is_error:
-            return STEP_ERROR_COLOR
-        elif step.is_success:
-            return STEP_COMPLETE_COLOR
-        else:
-            return STEP_PENDING_COLOR
+    source_tokens = tokenize(source_text)
+    compare_tokens = tokenize(compare_text)
 
-    # Collect timeline bounds
-    all_times: list[datetime] = []
-    for execution in executions:
-        for step in execution.steps:
-            st = _epoch_ms_to_datetime(step.started_at_epoch_ms)
-            et = _epoch_ms_to_datetime(step.completed_at_epoch_ms)
-            if st:
-                all_times.append(st)
-            if et:
-                all_times.append(et)
+    matcher = difflib.SequenceMatcher(None, source_tokens, compare_tokens)
 
-    if not all_times:
-        console.print(f"[yellow]No timing data available for {workflow_id}.[/yellow]")
-        return
+    source_result = Text()
+    compare_result = Text()
 
-    global_start = min(all_times)
-    global_end = max(all_times)
-    global_duration = (global_end - global_start).total_seconds()
-    if global_duration <= 0:
-        global_duration = 1.0
+    source_result.append("- ", style="red bold")
+    compare_result.append("+ ", style="green bold")
 
-    CHART_WIDTH = 20
+    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+        source_chunk = "".join(source_tokens[i1:i2])
+        compare_chunk = "".join(compare_tokens[j1:j2])
 
-    def time_to_col(t: datetime | None) -> int:
-        if t is None:
-            return 0
-        offset = (t - global_start).total_seconds()
-        return int((offset / global_duration) * CHART_WIDTH)
+        if tag == "equal":
+            # Same in both - show in dim
+            source_result.append(source_chunk, style="dim")
+            compare_result.append(compare_chunk, style="dim")
+        elif tag == "replace":
+            # Different - highlight the changes
+            source_result.append(source_chunk, style="red on #3d0000")
+            compare_result.append(compare_chunk, style="green on #003d00")
+        elif tag == "delete":
+            # Only in source (deleted)
+            source_result.append(source_chunk, style="red on #3d0000")
+        elif tag == "insert":
+            # Only in compare (inserted)
+            compare_result.append(compare_chunk, style="green on #003d00")
 
-    def render_bar(start_col: int, end_col: int, style: str = "green") -> Text:
-        bar = Text()
-        bar.append(" " * start_col)
-        bar_len = max(end_col - start_col, 1)
-        bar.append("█" * bar_len, style=style)
-        remaining = CHART_WIDTH - end_col
-        bar.append(" " * remaining)
-        return bar
-
-    # Build table
-    table = Table(
-        box=box.SIMPLE,
-        show_header=True,
-        header_style="bold cyan",
-        expand=True,
-        padding=(0, 1),
-    )
-    table.add_column("Step", style="bold", no_wrap=True)
-    table.add_column("Timeline", no_wrap=True, width=CHART_WIDTH)
-    table.add_column("Duration", justify="right", no_wrap=True)
-    table.add_column("", width=2)
-
-    for execution in executions:
-        if execution.workflow_id != workflow_id:
-            continue  # Only show the main workflow for simplicity
-
-        for step_i, step in enumerate(execution.steps):
-            st = _epoch_ms_to_datetime(step.started_at_epoch_ms)
-            et = _epoch_ms_to_datetime(step.completed_at_epoch_ms) or st
-
-            style = step_style(step)
-            icon = status_icon(step)
-
-            if st and et:
-                start_col = time_to_col(st)
-                end_col = time_to_col(et)
-                bar = render_bar(start_col, end_col, style)
-                duration = _compute_step_duration(step)
-                dur_str = f"{duration:.2f}s" if duration is not None else "—"
-            else:
-                bar = Text("·····", style="dim")
-                dur_str = "—"
-
-            is_last = step_i == len(execution.steps) - 1
-            connector = "└─" if is_last else "├─"
-            step_label = f"{connector} {step.function_id}: {step.function_name}"
-
-            table.add_row(
-                step_label,
-                bar,
-                dur_str,
-                Text(icon, style=f"bold {style}"),
-            )
-
-    # Print with header
-    console.print(
-        Panel(
-            table,
-            title=f"[bold]{label}[/bold]: {workflow_id[:20]}...",
-            border_style="cyan",
-            padding=(0, 1),
-        )
-    )
+    return source_result, compare_result
 
 
 def display_diff(
@@ -643,131 +634,312 @@ def display_diff(
 ) -> None:
     """Display a diff comparison between two workflow executions.
 
-    Shows both workflows in timeline format (vertically stacked), followed by
-    a diff summary with git-style color coding for differences in steps,
-    duration, and output.
+    Shows matching steps stacked together with clear labels for source (Selected)
+    and compare workflows. Uses timeline-style display with git-diff color coding.
+    Includes child workflows recursively like --timeline does.
 
     Args:
-        source_executions: Executions for the source workflow.
-        compare_executions: Executions for the compare workflow.
+        source_executions: Executions for the source workflow (including children).
+        compare_executions: Executions for the compare workflow (including children).
         source_id: The source workflow ID.
         compare_id: The compare workflow ID.
     """
     console = Console()
+    CHART_WIDTH = 25
 
+    # Build child workflow ID sets for both source and compare
+    source_child_ids: set[str] = set()
+    compare_child_ids: set[str] = set()
+    for exec in source_executions:
+        for step in exec.steps:
+            if step.child_workflow_id:
+                source_child_ids.add(step.child_workflow_id)
+    for exec in compare_executions:
+        for step in exec.steps:
+            if step.child_workflow_id:
+                compare_child_ids.add(step.child_workflow_id)
+
+    # Collect all steps from all executions in order
+    # Use (workflow_id, function_id, function_name) as a unique key to handle duplicate function names
+    StepKey = tuple[str, int | str, str]  # (workflow_id prefix, function_id, function_name)
+
+    def make_step_key(step: WorkflowStep, wf_id: str) -> StepKey:
+        # Use first 8 chars of workflow_id to group steps from same workflow
+        return (wf_id[:8], step.function_id, step.function_name)
+
+    source_steps_ordered: list[tuple[StepKey, WorkflowStep, bool, str]] = []
+    compare_steps_ordered: list[tuple[StepKey, WorkflowStep, bool, str]] = []
+
+    for exec in source_executions:
+        is_child = exec.workflow_id in source_child_ids
+        for step in exec.steps:
+            key = make_step_key(step, exec.workflow_id)
+            source_steps_ordered.append((key, step, is_child, exec.workflow_id))
+
+    for exec in compare_executions:
+        is_child = exec.workflow_id in compare_child_ids
+        for step in exec.steps:
+            key = make_step_key(step, exec.workflow_id)
+            compare_steps_ordered.append((key, step, is_child, exec.workflow_id))
+
+    # Build lookup by (function_id, function_name) for matching across workflows
+    # This allows matching step 1: foo in source with step 1: foo in compare
+    MatchKey = tuple[int | str, str]  # (function_id, function_name)
+
+    def make_match_key(step: WorkflowStep) -> MatchKey:
+        return (step.function_id, step.function_name)
+
+    source_by_match: dict[MatchKey, tuple[WorkflowStep, bool, str]] = {}
+    compare_by_match: dict[MatchKey, tuple[WorkflowStep, bool, str]] = {}
+
+    for _, step, is_child, wf_id in source_steps_ordered:
+        key = make_match_key(step)
+        source_by_match[key] = (step, is_child, wf_id)
+
+    for _, step, is_child, wf_id in compare_steps_ordered:
+        key = make_match_key(step)
+        compare_by_match[key] = (step, is_child, wf_id)
+
+    # Collect all times for global timeline scaling
+    all_times: list[datetime] = []
+    for _, step, _, _ in source_steps_ordered + compare_steps_ordered:
+        st = _epoch_ms_to_datetime(step.started_at_epoch_ms)
+        et = _epoch_ms_to_datetime(step.completed_at_epoch_ms)
+        if st:
+            all_times.append(st)
+        if et:
+            all_times.append(et)
+
+    if not all_times:
+        console.print("[yellow]No timing data available.[/yellow]")
+        return
+
+    global_start = min(all_times)
+    global_end = max(all_times)
+    global_duration = (global_end - global_start).total_seconds()
+    if global_duration <= 0:
+        global_duration = 1.0
+
+    def time_to_col(t: datetime | None) -> int:
+        if t is None:
+            return 0
+        offset = (t - global_start).total_seconds()
+        return int((offset / global_duration) * CHART_WIDTH)
+
+    def render_bar(step: WorkflowStep | None, style: str) -> Text:
+        """Render a timeline bar for a step."""
+        bar = Text()
+        if step is None:
+            bar.append(" " * CHART_WIDTH)
+            return bar
+
+        st = _epoch_ms_to_datetime(step.started_at_epoch_ms)
+        et = _epoch_ms_to_datetime(step.completed_at_epoch_ms) or st
+
+        if st and et:
+            start_col = time_to_col(st)
+            end_col = time_to_col(et)
+            bar.append(" " * start_col)
+            bar_len = max(end_col - start_col, 1)
+            bar.append("█" * bar_len, style=style)
+            bar.append(" " * (CHART_WIDTH - end_col))
+        else:
+            bar.append(" " * (CHART_WIDTH // 2 - 2))
+            bar.append("·····", style="dim")
+            bar.append(" " * (CHART_WIDTH // 2 - 3))
+        return bar
+
+    # Get all unique match keys preserving source order, then add compare-only keys
+    all_match_keys: list[MatchKey] = []
+    seen_keys: set[MatchKey] = set()
+    for _, step, _, _ in source_steps_ordered:
+        key = make_match_key(step)
+        if key not in seen_keys:
+            all_match_keys.append(key)
+            seen_keys.add(key)
+    for _, step, _, _ in compare_steps_ordered:
+        key = make_match_key(step)
+        if key not in seen_keys:
+            all_match_keys.append(key)
+            seen_keys.add(key)
+
+    # Print header
     console.print()
     console.print("[bold blue]🔀 Workflow Diff Comparison[/bold blue]")
     console.print()
 
-    # Render source timeline
-    _render_single_timeline(source_executions, "Select for Compare", source_id, console)
-    console.print()
-
-    # Render compare timeline
-    _render_single_timeline(
-        compare_executions, "Compare with Selected", compare_id, console
-    )
-    console.print()
-
-    # Build diff summary
-    console.print(Panel("[bold]Diff Summary[/bold]", border_style="yellow"))
-
-    # Get steps from main workflows
-    source_steps = (
-        source_executions[0].steps if source_executions else []
-    )
-    compare_steps = (
-        compare_executions[0].steps if compare_executions else []
-    )
-
-    # Build lookup by function name for matching
-    source_by_name: dict[str, WorkflowStep] = {s.function_name: s for s in source_steps}
-    compare_by_name: dict[str, WorkflowStep] = {
-        s.function_name: s for s in compare_steps
-    }
-
-    all_step_names = list(
-        dict.fromkeys(
-            [s.function_name for s in source_steps]
-            + [s.function_name for s in compare_steps]
-        )
-    )
-
-    # Diff table
+    # Build the diff table with stacked steps
     diff_table = Table(
-        box=box.ROUNDED,
+        box=box.SIMPLE,
         show_header=True,
-        header_style="bold",
+        header_style="bold blue",
         expand=True,
         padding=(0, 1),
+        show_lines=False,
     )
-    diff_table.add_column("Step", style="bold cyan", no_wrap=True)
-    diff_table.add_column("Duration Δ", justify="center", no_wrap=True)
-    diff_table.add_column("Output Diff", overflow="fold")
+    diff_table.add_column("Steps", style="bold", no_wrap=True, min_width=45)
+    diff_table.add_column("Timeline", no_wrap=True, width=CHART_WIDTH)
+    diff_table.add_column("Duration", style="dim", justify="center", no_wrap=True, min_width=22)
+    diff_table.add_column("Output", overflow="fold", ratio=1, no_wrap=False)
+    diff_table.add_column("", justify="center", width=2)
 
-    for step_name in all_step_names:
-        source_step = source_by_name.get(step_name)
-        compare_step = compare_by_name.get(step_name)
+    # Add workflow headers
+    diff_table.add_row(
+        f"[bold magenta]▶ SELECTED: {source_id}[/bold magenta]",
+        Text("▓" * CHART_WIDTH, style="bold magenta"),
+        f"[dim]{_get_display_time(global_start)} → {_get_display_time(global_end)}[/dim]",
+        "",
+        "📦",
+    )
+    diff_table.add_row(
+        f"[bold cyan]▶ COMPARE:  {compare_id}[/bold cyan]",
+        Text("▓" * CHART_WIDTH, style="bold cyan"),
+        "",
+        "",
+        "📦",
+    )
+    diff_table.add_row("", "", "", "", "")  # Spacer
 
-        # Duration comparison
+    for step_idx, match_key in enumerate(all_match_keys):
+        func_id, func_name = match_key
+        source_data = source_by_match.get(match_key)
+        compare_data = compare_by_match.get(match_key)
+
+        source_step = source_data[0] if source_data else None
+        source_is_child = source_data[1] if source_data else False
+        compare_step = compare_data[0] if compare_data else None
+        compare_is_child = compare_data[1] if compare_data else False
+
+        is_last = step_idx == len(all_match_keys) - 1
+
+        # Compute durations
         source_dur = _compute_step_duration(source_step) if source_step else None
         compare_dur = _compute_step_duration(compare_step) if compare_step else None
 
+        # Compute duration delta
+        dur_delta_text = ""
         if source_dur is not None and compare_dur is not None:
             delta = compare_dur - source_dur
-            if abs(delta) < 0.01:
-                dur_text = Text("(same)", style="dim")
-            else:
+            if abs(delta) >= 0.001:
                 pct = (delta / source_dur * 100) if source_dur > 0 else 0
                 sign = "+" if delta > 0 else ""
                 color = "red" if delta > 0 else "green"
-                dur_text = Text(f"{sign}{delta:.2f}s ({pct:+.0f}%)", style=color)
-        elif source_dur is None and compare_dur is None:
-            dur_text = Text("—", style="dim")
-        elif source_dur is None:
-            dur_text = Text(f"+{compare_dur:.2f}s (new)", style="green")
-        else:
-            dur_text = Text(f"-{source_dur:.2f}s (removed)", style="red")
+                dur_delta_text = f"[{color}]Δ {sign}{delta:.2f}s ({pct:+.0f}%)[/{color}]"
 
-        # Output comparison
+        # Get output strings (full text, no truncation)
         source_output = str(source_step.output) if source_step and source_step.output else None
-        compare_output = (
-            str(compare_step.output) if compare_step and compare_step.output else None
-        )
+        compare_output = str(compare_step.output) if compare_step and compare_step.output else None
 
-        output_diff = Text()
-        if source_output == compare_output:
+        outputs_match = source_output == compare_output
+
+        # Compute git-style word diff if outputs differ
+        source_diff_text: Text | str | None = None
+        compare_diff_text: Text | str | None = None
+        if source_output and compare_output and not outputs_match:
+            source_diff_text, compare_diff_text = _compute_word_diff(source_output, compare_output)
+        elif source_output and not compare_output:
+            # Source has output, compare doesn't
+            src_text = Text()
+            src_text.append("- ", style="red bold")
+            src_text.append(source_output, style="red")
+            source_diff_text = src_text
+        elif compare_output and not source_output:
+            # Compare has output, source doesn't
+            cmp_text = Text()
+            cmp_text.append("+ ", style="green bold")
+            cmp_text.append(compare_output, style="green")
+            compare_diff_text = cmp_text
+
+        # Determine connector style
+        connector = "└─" if is_last else "├─"
+        is_child_step = source_is_child or compare_is_child
+        child_prefix = "  ↳ " if is_child_step else " "
+
+        # --- SOURCE ROW (magenta) - Only show if source step exists ---
+        if source_step:
+            style = _get_step_style(source_step)
+            icon = _get_status_icon(source_step)
+            bar = render_bar(source_step, "magenta")
+            dur_str = f"{source_dur:.2f}s" if source_dur is not None else "—"
+
+            # Arrow if spawned child workflow
+            arrow = " [yellow]→[/yellow]" if source_step.child_workflow_id else ""
+
+            # Output - use git-style diff or show same text
             if source_output:
-                output_diff.append("(no change)", style="dim")
+                if outputs_match:
+                    out_preview: Text | str = source_output
+                elif source_diff_text:
+                    out_preview = source_diff_text
+                else:
+                    out_preview = "[dim]—[/dim]"
             else:
-                output_diff.append("—", style="dim")
-        else:
-            # Show git-style diff
-            if source_output:
-                # Truncate long outputs
-                src_preview = (
-                    source_output[:80] + "..."
-                    if len(source_output) > 80
-                    else source_output
-                )
-                output_diff.append(f"- {src_preview}\n", style="red")
+                out_preview = "[dim]—[/dim]"
+
+            diff_table.add_row(
+                f"[magenta]{child_prefix}{connector} {func_id}: {func_name}{arrow}[/magenta]  [dim](selected)[/dim]",
+                bar,
+                dur_str,
+                out_preview,
+                Text(icon, style=f"bold {style}"),
+            )
+
+        # --- COMPARE ROW (cyan) - Only show if compare step exists ---
+        if compare_step:
+            style = _get_step_style(compare_step)
+            icon = _get_status_icon(compare_step)
+            bar = render_bar(compare_step, "cyan")
+            dur_str = f"{compare_dur:.2f}s" if compare_dur is not None else "—"
+
+            # Arrow if spawned child workflow
+            arrow = " [yellow]→[/yellow]" if compare_step.child_workflow_id else ""
+
+            # Determine the step label prefix
+            if source_step:
+                # Both exist - show as comparison row
+                step_prefix = f"{child_prefix}│  "
+            else:
+                # Only in compare - show as new step
+                step_prefix = f"{child_prefix}{connector} "
+
+            # Output - use git-style diff or show same text
             if compare_output:
-                cmp_preview = (
-                    compare_output[:80] + "..."
-                    if len(compare_output) > 80
-                    else compare_output
-                )
-                output_diff.append(f"+ {cmp_preview}", style="green")
+                if outputs_match:
+                    out_preview = compare_output
+                elif compare_diff_text:
+                    out_preview = compare_diff_text
+                else:
+                    out_preview = "[dim]—[/dim]"
+            else:
+                out_preview = "[dim]—[/dim]"
 
-        # Step label with status
-        if source_step and compare_step:
-            step_label = f"{source_step.function_id}: {step_name}"
-        elif source_step:
-            step_label = f"[red]- {source_step.function_id}: {step_name}[/red]"
-        else:
-            step_label = f"[green]+ {compare_step.function_id}: {step_name}[/green]"
+            # Duration display
+            if source_step:
+                dur_display = f"{dur_str}  {dur_delta_text}" if dur_delta_text else dur_str
+            else:
+                dur_display = f"{dur_str}  [green](new)[/green]"
 
-        diff_table.add_row(step_label, dur_text, output_diff)
+            diff_table.add_row(
+                f"[cyan]{step_prefix}{func_id}: {func_name}{arrow}[/cyan]  [dim](compare)[/dim]",
+                bar,
+                dur_display,
+                out_preview,
+                Text(icon, style=f"bold {style}"),
+            )
+
+        # If step only exists in source (removed in compare), show the compare row as removed
+        if source_step and not compare_step:
+            diff_table.add_row(
+                f"[red]{child_prefix}│  {func_id}: {func_name}[/red]  [dim](compare)[/dim]",
+                Text(" " * CHART_WIDTH),
+                f"[red](removed)[/red]",
+                "[dim]—[/dim]",
+                "",
+            )
+
+        # Add spacing between step pairs
+        if not is_last:
+            diff_table.add_row("", "", "", "", "")
 
     console.print(diff_table)
     console.print()

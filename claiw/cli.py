@@ -178,16 +178,17 @@ def history(
                 return
             source_id, compare_id = result
 
-            # Print the rerunnable command
-            click.echo()
-            click.echo(
-                f"[dim]# To rerun this diff without prompts:[/dim]",
-                color=True,
+            # Print the rerunnable command using Rich for proper formatting
+            from rich.console import Console
+            console = Console()
+            console.print()
+            console.print(
+                f"[dim]# To rerun this diff without prompts:[/dim]"
             )
-            click.echo(
-                f"claiw history {name_or_id} --diff --source {source_id} --compare {compare_id}"
+            console.print(
+                f"[bold]claiw history {name_or_id} --diff --source {source_id} --compare {compare_id}[/bold]"
             )
-            click.echo()
+            console.print()
 
         # Get executions for both workflows
         try:
