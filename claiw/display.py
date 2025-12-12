@@ -528,22 +528,22 @@ def select_workflows_for_diff(
         app.run()
         return result[0]
 
-    # First selection
+    # First selection - SOURCE
     console.print()
-    source_id = run_selection("Select for Compare (SOURCE):", summaries)
+    source_id = run_selection("Select SOURCE workflow:", summaries)
     if source_id is None:
         return None
 
-    # Second selection
-    compare_id = run_selection(
-        f"Compare with Selected (source: {source_id[:12]}...):",
+    # Second selection - TARGET
+    target_id = run_selection(
+        f"Select TARGET workflow (source: {source_id[:12]}...):",
         summaries,
         exclude_id=source_id
     )
-    if compare_id is None:
+    if target_id is None:
         return None
 
-    return (source_id, compare_id)
+    return (source_id, target_id)
 
 
 def _compute_step_duration(step: WorkflowStep) -> float | None:
@@ -628,36 +628,36 @@ def _compute_word_diff(source_text: str, compare_text: str) -> tuple[Text, Text]
 
 def display_diff(
     source_executions: list[WorkflowExecution],
-    compare_executions: list[WorkflowExecution],
+    target_executions: list[WorkflowExecution],
     source_id: str,
-    compare_id: str,
+    target_id: str,
 ) -> None:
     """Display a diff comparison between two workflow executions.
 
-    Shows matching steps stacked together with clear labels for source (Selected)
-    and compare workflows. Uses timeline-style display with git-diff color coding.
+    Shows matching steps stacked together with clear labels for source and
+    target workflows. Uses timeline-style display with git-diff color coding.
     Includes child workflows recursively like --timeline does.
 
     Args:
         source_executions: Executions for the source workflow (including children).
-        compare_executions: Executions for the compare workflow (including children).
+        target_executions: Executions for the target workflow (including children).
         source_id: The source workflow ID.
-        compare_id: The compare workflow ID.
+        target_id: The target workflow ID.
     """
     console = Console()
     CHART_WIDTH = 25
 
-    # Build child workflow ID sets for both source and compare
+    # Build child workflow ID sets for both source and target
     source_child_ids: set[str] = set()
-    compare_child_ids: set[str] = set()
+    target_child_ids: set[str] = set()
     for exec in source_executions:
         for step in exec.steps:
             if step.child_workflow_id:
                 source_child_ids.add(step.child_workflow_id)
-    for exec in compare_executions:
+    for exec in target_executions:
         for step in exec.steps:
             if step.child_workflow_id:
-                compare_child_ids.add(step.child_workflow_id)
+                target_child_ids.add(step.child_workflow_id)
 
     # Collect all steps from all executions in order
     # Use (workflow_id, function_id, function_name) as a unique key to handle duplicate function names
@@ -668,7 +668,7 @@ def display_diff(
         return (wf_id[:8], step.function_id, step.function_name)
 
     source_steps_ordered: list[tuple[StepKey, WorkflowStep, bool, str]] = []
-    compare_steps_ordered: list[tuple[StepKey, WorkflowStep, bool, str]] = []
+    target_steps_ordered: list[tuple[StepKey, WorkflowStep, bool, str]] = []
 
     for exec in source_executions:
         is_child = exec.workflow_id in source_child_ids
@@ -676,33 +676,33 @@ def display_diff(
             key = make_step_key(step, exec.workflow_id)
             source_steps_ordered.append((key, step, is_child, exec.workflow_id))
 
-    for exec in compare_executions:
-        is_child = exec.workflow_id in compare_child_ids
+    for exec in target_executions:
+        is_child = exec.workflow_id in target_child_ids
         for step in exec.steps:
             key = make_step_key(step, exec.workflow_id)
-            compare_steps_ordered.append((key, step, is_child, exec.workflow_id))
+            target_steps_ordered.append((key, step, is_child, exec.workflow_id))
 
     # Build lookup by (function_id, function_name) for matching across workflows
-    # This allows matching step 1: foo in source with step 1: foo in compare
+    # This allows matching step 1: foo in source with step 1: foo in target
     MatchKey = tuple[int | str, str]  # (function_id, function_name)
 
     def make_match_key(step: WorkflowStep) -> MatchKey:
         return (step.function_id, step.function_name)
 
     source_by_match: dict[MatchKey, tuple[WorkflowStep, bool, str]] = {}
-    compare_by_match: dict[MatchKey, tuple[WorkflowStep, bool, str]] = {}
+    target_by_match: dict[MatchKey, tuple[WorkflowStep, bool, str]] = {}
 
     for _, step, is_child, wf_id in source_steps_ordered:
         key = make_match_key(step)
         source_by_match[key] = (step, is_child, wf_id)
 
-    for _, step, is_child, wf_id in compare_steps_ordered:
+    for _, step, is_child, wf_id in target_steps_ordered:
         key = make_match_key(step)
-        compare_by_match[key] = (step, is_child, wf_id)
+        target_by_match[key] = (step, is_child, wf_id)
 
     # Collect all times for global timeline scaling
     all_times: list[datetime] = []
-    for _, step, _, _ in source_steps_ordered + compare_steps_ordered:
+    for _, step, _, _ in source_steps_ordered + target_steps_ordered:
         st = _epoch_ms_to_datetime(step.started_at_epoch_ms)
         et = _epoch_ms_to_datetime(step.completed_at_epoch_ms)
         if st:
@@ -749,7 +749,7 @@ def display_diff(
             bar.append(" " * (CHART_WIDTH // 2 - 3))
         return bar
 
-    # Get all unique match keys preserving source order, then add compare-only keys
+    # Get all unique match keys preserving source order, then add target-only keys
     all_match_keys: list[MatchKey] = []
     seen_keys: set[MatchKey] = set()
     for _, step, _, _ in source_steps_ordered:
@@ -757,16 +757,11 @@ def display_diff(
         if key not in seen_keys:
             all_match_keys.append(key)
             seen_keys.add(key)
-    for _, step, _, _ in compare_steps_ordered:
+    for _, step, _, _ in target_steps_ordered:
         key = make_match_key(step)
         if key not in seen_keys:
             all_match_keys.append(key)
             seen_keys.add(key)
-
-    # Print header
-    console.print()
-    console.print("[bold blue]🔀 Workflow Diff Comparison[/bold blue]")
-    console.print()
 
     # Build the diff table with stacked steps
     diff_table = Table(
@@ -785,14 +780,14 @@ def display_diff(
 
     # Add workflow headers
     diff_table.add_row(
-        f"[bold magenta]▶ SELECTED: {source_id}[/bold magenta]",
+        f"[bold magenta]▶ SOURCE: {source_id}[/bold magenta]",
         Text("▓" * CHART_WIDTH, style="bold magenta"),
         f"[dim]{_get_display_time(global_start)} → {_get_display_time(global_end)}[/dim]",
         "",
         "📦",
     )
     diff_table.add_row(
-        f"[bold cyan]▶ COMPARE:  {compare_id}[/bold cyan]",
+        f"[bold cyan]▶ TARGET: {target_id}[/bold cyan]",
         Text("▓" * CHART_WIDTH, style="bold cyan"),
         "",
         "",
@@ -803,23 +798,23 @@ def display_diff(
     for step_idx, match_key in enumerate(all_match_keys):
         func_id, func_name = match_key
         source_data = source_by_match.get(match_key)
-        compare_data = compare_by_match.get(match_key)
+        target_data = target_by_match.get(match_key)
 
         source_step = source_data[0] if source_data else None
         source_is_child = source_data[1] if source_data else False
-        compare_step = compare_data[0] if compare_data else None
-        compare_is_child = compare_data[1] if compare_data else False
+        target_step = target_data[0] if target_data else None
+        target_is_child = target_data[1] if target_data else False
 
         is_last = step_idx == len(all_match_keys) - 1
 
         # Compute durations
         source_dur = _compute_step_duration(source_step) if source_step else None
-        compare_dur = _compute_step_duration(compare_step) if compare_step else None
+        target_dur = _compute_step_duration(target_step) if target_step else None
 
         # Compute duration delta
         dur_delta_text = ""
-        if source_dur is not None and compare_dur is not None:
-            delta = compare_dur - source_dur
+        if source_dur is not None and target_dur is not None:
+            delta = target_dur - source_dur
             if abs(delta) >= 0.001:
                 pct = (delta / source_dur * 100) if source_dur > 0 else 0
                 sign = "+" if delta > 0 else ""
@@ -828,31 +823,31 @@ def display_diff(
 
         # Get output strings (full text, no truncation)
         source_output = str(source_step.output) if source_step and source_step.output else None
-        compare_output = str(compare_step.output) if compare_step and compare_step.output else None
+        target_output = str(target_step.output) if target_step and target_step.output else None
 
-        outputs_match = source_output == compare_output
+        outputs_match = source_output == target_output
 
         # Compute git-style word diff if outputs differ
         source_diff_text: Text | str | None = None
-        compare_diff_text: Text | str | None = None
-        if source_output and compare_output and not outputs_match:
-            source_diff_text, compare_diff_text = _compute_word_diff(source_output, compare_output)
-        elif source_output and not compare_output:
-            # Source has output, compare doesn't
+        target_diff_text: Text | str | None = None
+        if source_output and target_output and not outputs_match:
+            source_diff_text, target_diff_text = _compute_word_diff(source_output, target_output)
+        elif source_output and not target_output:
+            # Source has output, target doesn't
             src_text = Text()
             src_text.append("- ", style="red bold")
             src_text.append(source_output, style="red")
             source_diff_text = src_text
-        elif compare_output and not source_output:
-            # Compare has output, source doesn't
-            cmp_text = Text()
-            cmp_text.append("+ ", style="green bold")
-            cmp_text.append(compare_output, style="green")
-            compare_diff_text = cmp_text
+        elif target_output and not source_output:
+            # Target has output, source doesn't
+            tgt_text = Text()
+            tgt_text.append("+ ", style="green bold")
+            tgt_text.append(target_output, style="green")
+            target_diff_text = tgt_text
 
         # Determine connector style
         connector = "└─" if is_last else "├─"
-        is_child_step = source_is_child or compare_is_child
+        is_child_step = source_is_child or target_is_child
         child_prefix = "  ↳ " if is_child_step else " "
 
         # --- SOURCE ROW (magenta) - Only show if source step exists ---
@@ -877,37 +872,37 @@ def display_diff(
                 out_preview = "[dim]—[/dim]"
 
             diff_table.add_row(
-                f"[magenta]{child_prefix}{connector} {func_id}: {func_name}{arrow}[/magenta]  [dim](selected)[/dim]",
+                f"[magenta]{child_prefix}{connector} {func_id}: {func_name}{arrow}[/magenta]  [dim](source)[/dim]",
                 bar,
                 dur_str,
                 out_preview,
                 Text(icon, style=f"bold {style}"),
             )
 
-        # --- COMPARE ROW (cyan) - Only show if compare step exists ---
-        if compare_step:
-            style = _get_step_style(compare_step)
-            icon = _get_status_icon(compare_step)
-            bar = render_bar(compare_step, "cyan")
-            dur_str = f"{compare_dur:.2f}s" if compare_dur is not None else "—"
+        # --- TARGET ROW (cyan) - Only show if target step exists ---
+        if target_step:
+            style = _get_step_style(target_step)
+            icon = _get_status_icon(target_step)
+            bar = render_bar(target_step, "cyan")
+            dur_str = f"{target_dur:.2f}s" if target_dur is not None else "—"
 
             # Arrow if spawned child workflow
-            arrow = " [yellow]→[/yellow]" if compare_step.child_workflow_id else ""
+            arrow = " [yellow]→[/yellow]" if target_step.child_workflow_id else ""
 
             # Determine the step label prefix
             if source_step:
-                # Both exist - show as comparison row
+                # Both exist - show as target row
                 step_prefix = f"{child_prefix}│  "
             else:
-                # Only in compare - show as new step
+                # Only in target - show as new step
                 step_prefix = f"{child_prefix}{connector} "
 
             # Output - use git-style diff or show same text
-            if compare_output:
+            if target_output:
                 if outputs_match:
-                    out_preview = compare_output
-                elif compare_diff_text:
-                    out_preview = compare_diff_text
+                    out_preview = target_output
+                elif target_diff_text:
+                    out_preview = target_diff_text
                 else:
                     out_preview = "[dim]—[/dim]"
             else:
@@ -920,17 +915,17 @@ def display_diff(
                 dur_display = f"{dur_str}  [green](new)[/green]"
 
             diff_table.add_row(
-                f"[cyan]{step_prefix}{func_id}: {func_name}{arrow}[/cyan]  [dim](compare)[/dim]",
+                f"[cyan]{step_prefix}{func_id}: {func_name}{arrow}[/cyan]  [dim](target)[/dim]",
                 bar,
                 dur_display,
                 out_preview,
                 Text(icon, style=f"bold {style}"),
             )
 
-        # If step only exists in source (removed in compare), show the compare row as removed
-        if source_step and not compare_step:
+        # If step only exists in source (removed in target), show the target row as removed
+        if source_step and not target_step:
             diff_table.add_row(
-                f"[red]{child_prefix}│  {func_id}: {func_name}[/red]  [dim](compare)[/dim]",
+                f"[red]{child_prefix}│  {func_id}: {func_name}[/red]  [dim](target)[/dim]",
                 Text(" " * CHART_WIDTH),
                 f"[red](removed)[/red]",
                 "[dim]—[/dim]",

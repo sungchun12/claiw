@@ -119,14 +119,14 @@ def run(name: str | None) -> None:
 @click.option("--json", "-j", "as_json", is_flag=True, help="Output as JSON")
 @click.option("--diff", "-d", is_flag=True, help="Compare two workflow runs")
 @click.option("--source", "-s", default=None, help="Source workflow ID for diff")
-@click.option("--compare", "-c", default=None, help="Workflow ID to compare against source")
+@click.option("--target", "-T", "target", default=None, help="Target workflow ID to compare against source")
 def history(
     name_or_id: str | None,
     timeline: bool,
     as_json: bool,
     diff: bool,
     source: str | None,
-    compare: str | None,
+    target: str | None,
 ) -> None:
     """View workflow execution history.
 
@@ -141,7 +141,7 @@ def history(
         claiw history example --timeline # Show Gantt chart
         claiw history example --json     # Output as JSON
         claiw history example --diff     # Compare two runs interactively
-        claiw history example --diff --source <id1> --compare <id2>  # Direct diff
+        claiw history example --diff --source <id1> --target <id2>  # Direct diff
     """
     from claiw.dbos_client import get_default_client
     from claiw.display import print_steps, display_timeline, display_diff
@@ -164,10 +164,10 @@ def history(
             )
             return
 
-        # If source and compare provided, use them directly
-        if source and compare:
+        # If source and target provided, use them directly
+        if source and target:
             source_id = source
-            compare_id = compare
+            target_id = target
         else:
             # Interactive selection using prompt_toolkit
             from claiw.display import select_workflows_for_diff
@@ -176,30 +176,30 @@ def history(
             if result is None:
                 click.echo("Diff cancelled.")
                 return
-            source_id, compare_id = result
-
-            # Print the rerunnable command using Rich for proper formatting
-            from rich.console import Console
-            console = Console()
-            console.print()
-            console.print(
-                f"[dim]# To rerun this diff without prompts:[/dim]"
-            )
-            console.print(
-                f"[bold]claiw history {name_or_id} --diff --source {source_id} --compare {compare_id}[/bold]"
-            )
-            console.print()
+            source_id, target_id = result
 
         # Get executions for both workflows
         try:
             source_executions = client.get_workflow_steps_recursive(source_id)
-            compare_executions = client.get_workflow_steps_recursive(compare_id)
+            target_executions = client.get_workflow_steps_recursive(target_id)
         except Exception as e:
             click.echo(f"Error fetching workflow data: {e}", err=True)
             return
 
         # Display the diff
-        display_diff(source_executions, compare_executions, source_id, compare_id)
+        display_diff(source_executions, target_executions, source_id, target_id)
+
+        # Print the rerunnable command using Rich for proper formatting
+        from rich.console import Console
+        console = Console()
+        console.print()
+        console.print(
+            f"[dim]# To rerun this diff without prompts:[/dim]"
+        )
+        console.print(
+            f"[bold]claiw history {name_or_id} --diff --source {source_id} --target {target_id}[/bold]"
+        )
+        console.print()
         return
 
     if not name_or_id:
