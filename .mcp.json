@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "quint-code": {
+      "command": "/Users/sung/.local/bin/quint-code",
+      "args": [
+        "serve"
+      ],
+      "cwd": "/Users/sung/Desktop/git_repos/claiw",
+      "env": {
+        "QUINT_PROJECT_ROOT": "/Users/sung/Desktop/git_repos/claiw"
+      }
+    }
+  }
+}
